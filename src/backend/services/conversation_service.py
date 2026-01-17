@@ -697,10 +697,11 @@ class ConversationService:
             )
             context.phase = ConversationPhase.ASKING_DESTINATION
         else:
+            # 位置情報が取得できない場合、現在地を質問する
             welcome_message = (
                 "こんにちは！Data Plug Copilotです。\n"
                 "あなたの訪問履歴を参考に、おすすめの立ち寄りスポットをご提案します。\n\n"
-                "まず、現在地を教えてください。"
+                "位置情報が取得できません。現在地を教えてください。"
             )
             context.phase = ConversationPhase.WAITING_LOCATION
 

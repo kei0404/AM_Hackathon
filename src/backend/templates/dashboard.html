@@ -338,18 +338,57 @@
     let isSessionActive = {{ 'true' if session_started else 'false' }};
     let conversationPhase = 'waiting_start';  // waiting_start, waiting_location, asking_destination, asking_preferences, suggesting
 
+    // Get current location using Geolocation API
+    async function getCurrentLocation() {
+        return new Promise((resolve) => {
+            if (!navigator.geolocation) {
+                console.log('Geolocation not supported');
+                resolve(null);
+                return;
+            }
+
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    resolve({
+                        latitude: position.coords.latitude,
+                        longitude: position.coords.longitude,
+                        accuracy: position.coords.accuracy
+                    });
+                },
+                (error) => {
+                    console.log('Geolocation error:', error.message);
+                    resolve(null);
+                },
+                {
+                    enableHighAccuracy: true,
+                    timeout: 5000,
+                    maximumAge: 0
+                }
+            );
+        });
+    }
+
     // Start button - Create new session
     startButton.addEventListener('click', async () => {
         startButton.disabled = true;
         const startTime = Date.now();
 
         try {
+            // Get current location from browser
+            const location = await getCurrentLocation();
+            console.log('Location obtained:', location);
+
+            const requestBody = {};
+            if (location) {
+                requestBody.current_location = location;
+            }
+
             const response = await fetch('/api/v1/chat/start', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({}),
+                body: JSON.stringify(requestBody),
             });
 
             const duration = Date.now() - startTime;
@@ -361,7 +400,6 @@
             const data = await response.json();
             sessionId = data.session_id;
             isSessionActive = true;
-            conversationPhase = 'waiting_location';
 
             // Update UI elements
             document.getElementById('session-id-display').textContent = sessionId.substring(0, 8) + '...';
@@ -376,14 +414,27 @@
   <span class="json-key">"data_scope"</span>: [<span class="json-string">"preferences"</span>, <span class="json-string">"favorites"</span>]
 <span class="json-key">}</span>`;
 
-            // Enable route inputs (message input stays disabled until preferences phase)
-            messageInput.disabled = true;
-            messageInput.placeholder = '現在地と目的地を入力後に使用できます';
-            currentLocationInput.disabled = false;
-            destinationInput.disabled = true;  // Will be enabled after current location is entered
-
-            // Focus on current location input
-            currentLocationInput.focus();
+            // Enable route inputs based on location availability
+            if (location) {
+                // 位置情報あり: 現在地を自動設定し、目的地入力を有効化
+                conversationPhase = 'asking_destination';
+                currentLocationInput.value = `${location.latitude.toFixed(6)}, ${location.longitude.toFixed(6)}`;
+                currentLocationInput.disabled = true;  // 自動取得したので編集不可
+                destinationInput.disabled = false;
+                destinationInput.focus();
+                messageInput.disabled = true;
+                messageInput.placeholder = '目的地を入力後に使用できます';
+            } else {
+                // 位置情報なし: 現在地入力を有効化
+                conversationPhase = 'waiting_location';
+                currentLocationInput.value = '';
+                currentLocationInput.placeholder = '現在地を入力してください';
+                currentLocationInput.disabled = false;
+                currentLocationInput.focus();
+                destinationInput.disabled = true;
+                messageInput.disabled = false;
+                messageInput.placeholder = '現在地を入力してください';
+            }
 
             // Update panels
             document.getElementById('input-panel').classList.remove('opacity-50');
