@@ -23,8 +23,13 @@ class ConversationPhase(str, Enum):
     WAITING_LOCATION = "waiting_location"  # 現在地待ち
     ASKING_DESTINATION = "asking_destination"  # 目的地を質問中
     ASKING_PREFERENCES = "asking_preferences"  # 追加の希望を質問中
-    SUGGESTING_STOPOVER = "suggesting_stopover"  # 立ち寄り先を提案中
-    COMPLETE = "complete"  # 会話完了
+    SUGGESTING_FIRST = "suggesting_first"  # 1つ目の提案中
+    SUGGESTING_SECOND = "suggesting_second"  # 2つ目の提案中
+    SUGGESTING_THIRD = "suggesting_third"  # 3つ目の提案中
+    ASKING_OTHER_PREFERENCES = "asking_other_preferences"  # 他の希望を質問中
+    NAVIGATING = "navigating"  # ナビゲーション中（変更受付可能）
+    CONFIRMING_STOPOVER_CHANGE = "confirming_stopover_change"  # 立ち寄り場所変更の確認中
+    CONFIRMING_DESTINATION_CHANGE = "confirming_destination_change"  # 目的地変更の確認中
 
 
 class ChatMessage(BaseModel):
@@ -68,3 +73,7 @@ class ConversationContext(BaseModel):
     current_location: Optional[str] = None
     destination: Optional[str] = None
     additional_preferences: Optional[str] = None  # 追加の希望（やりたいこと等）
+    # 提案関連の新しいフィールド
+    suggestions_list: list[dict] = Field(default_factory=list)  # RAG検索結果からの3つの提案
+    current_suggestion_index: int = 0  # 現在提案中のインデックス（0, 1, 2）
+    selected_stopover: Optional[str] = None  # 選択された立ち寄り先

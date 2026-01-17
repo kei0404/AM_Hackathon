@@ -394,6 +394,94 @@ class LLMService:
             "turn_count": turn_count + 1,
         }
 
+    def classify_user_response(
+        self,
+        user_message: str,
+        suggestion_context: str,
+    ) -> str:
+        """
+        LLMを使ってユーザーの返答が賛成か反対かを判定する
+
+        Args:
+            user_message: ユーザーからのメッセージ
+            suggestion_context: 提案内容のコンテキスト
+
+        Returns:
+            "affirmative" (賛成) または "negative" (反対)
+        """
+        if self.demo_mode:
+            return self._classify_demo_response(user_message)
+
+        system_prompt = """あなたはユーザーの返答を分類するアシスタントです。
+
+ユーザーに対して場所の提案がされました。ユーザーの返答が、その提案に対して「賛成」か「反対」かを判定してください。
+
+【判定基準】
+- 賛成: 提案を受け入れる意思を示している（例: はい、いいね、行く、そこにしよう、OK、決まり、お願い等）
+- 反対: 提案を拒否する意思を示している（例: いいえ、違う、他の場所、別のところ、やめる等）
+
+【重要】
+- 曖昧な返答や質問の場合も、文脈から判断してください
+- 必ず「affirmative」または「negative」のどちらか1語のみを返答してください
+"""
+
+        user_prompt = f"""【提案内容】
+{suggestion_context}
+
+【ユーザーの返答】
+{user_message}
+
+この返答は提案に対して賛成ですか、反対ですか？「affirmative」または「negative」の1語で回答してください。"""
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                max_tokens=10,
+                temperature=0.0,
+            )
+            result = response.choices[0].message.content or ""
+            result = result.strip().lower()
+
+            if "affirmative" in result:
+                return "affirmative"
+            elif "negative" in result:
+                return "negative"
+            else:
+                logger.warning(f"予期しない分類結果: {result}")
+                return self._classify_demo_response(user_message)
+        except Exception as e:
+            logger.error(f"分類APIエラー: {e}")
+            return self._classify_demo_response(user_message)
+
+    def _classify_demo_response(self, user_message: str) -> str:
+        """デモモード用のフォールバック分類（キーワードベース）"""
+        message_lower = user_message.lower().strip()
+
+        negative_words = [
+            "いいえ", "no", "違う", "他の", "別の", "やめ",
+            "ない", "なし", "だめ", "嫌", "いや", "結構です"
+        ]
+        if any(word in message_lower for word in negative_words):
+            return "negative"
+
+        affirmative_words = [
+            "はい", "yes", "ok", "okay", "オッケー", "おっけー",
+            "いいね", "いい", "良い", "そこにする", "それにする",
+            "行く", "行こう", "行きたい", "決まり", "決定",
+            "1", "うん", "ええ", "そうする", "お願い",
+            "賛成", "了解", "りょうかい", "わかった", "オーケー"
+        ]
+        if any(word in message_lower for word in affirmative_words):
+            return "affirmative"
+
+        return "negative"
+
 
 # シングルトンインスタンス
 llm_service = LLMService()
