@@ -13,6 +13,7 @@ from fastapi.templating import Jinja2Templates
 from .api.chat import router as chat_router
 from .api.vector import router as vector_router
 from .api.web import router as web_router
+from .api.websocket import router as websocket_router
 
 # ロギング設定
 logging.basicConfig(
@@ -40,14 +41,21 @@ app = FastAPI(
 - **会話管理**: セッションベースの会話履歴管理
 - **ベクトル検索**: ChromaDBによる類似度検索
 - **プライバシー保護**: セッション終了時のデータ自動消去
+- **音声入力**: WebSocket経由のリアルタイム音声認識（Qwen ASR）
+- **モバイル対応**: React Nativeアプリからの位置情報連携
 
 ### プライバシー・バイ・デザイン
 
 - ユーザーデータはセッション中のみ保持
 - セッション終了時に全データを消去
 - 外部サーバーへのデータ送信なし（LLM API呼び出しを除く）
+
+### WebSocketエンドポイント
+
+- `/ws/voice/{session_id}`: 音声ストリーミング入力
+- `/ws/chat/{session_id}`: テキストチャット（リアルタイム）
     """,
-    version="0.3.0",
+    version="0.4.0",
     docs_url="/docs",
     redoc_url="/redoc",
 )
@@ -72,6 +80,7 @@ if STATIC_DIR.exists():
 app.include_router(chat_router, prefix="/api/v1")
 app.include_router(vector_router)
 app.include_router(web_router)
+app.include_router(websocket_router, prefix="/api/v1")  # WebSocket音声/チャット
 
 
 @app.get("/health")

@@ -685,15 +685,24 @@ class ConversationService:
         if not session_id or not self._cache.exists(session_id):
             session_id = self.create_session()
 
-        welcome_message = (
-            "こんにちは！Data Plug Copilotです。\n"
-            "あなたの訪問履歴を参考に、おすすめの立ち寄りスポットをご提案します。\n\n"
-            "まず、現在地を教えてください。"
-        )
-
         context = self._cache.get(session_id)
-        # フェーズを初期状態に設定
-        context.phase = ConversationPhase.WAITING_LOCATION
+
+        # 位置情報が既に設定されている場合（モバイルアプリからのGPS連携）
+        if context.current_location:
+            welcome_message = (
+                "こんにちは！Data Plug Copilotです。\n"
+                "あなたの訪問履歴を参考に、おすすめの立ち寄りスポットをご提案します。\n\n"
+                f"現在地: {context.current_location}\n\n"
+                "どこに行きたいですか？"
+            )
+            context.phase = ConversationPhase.ASKING_DESTINATION
+        else:
+            welcome_message = (
+                "こんにちは！Data Plug Copilotです。\n"
+                "あなたの訪問履歴を参考に、おすすめの立ち寄りスポットをご提案します。\n\n"
+                "まず、現在地を教えてください。"
+            )
+            context.phase = ConversationPhase.WAITING_LOCATION
 
         ai_message = ChatMessage(
             role=MessageRole.ASSISTANT,

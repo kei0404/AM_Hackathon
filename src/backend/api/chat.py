@@ -8,7 +8,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from ..models.chat import ChatRequest, ChatResponse
+from ..models.chat import ChatRequest, ChatResponse, LocationData
 from ..services.conversation_service import conversation_service
 from ..services.sample_data import (
     clear_data_files,
@@ -28,6 +28,7 @@ class WelcomeRequest(BaseModel):
     session_id: Optional[str] = None
     user_preferences: Optional[dict] = None
     favorite_spots: Optional[list[dict]] = None
+    current_location: Optional[LocationData] = None  # GPS座標形式の位置情報
 
 
 class SessionResponse(BaseModel):
@@ -75,14 +76,29 @@ async def start_conversation(request: WelcomeRequest) -> ChatResponse:
     except Exception as e:
         logger.error(f"[Start] データ初期化エラー: {e}", exc_info=True)
 
-    # ユーザー情報がある場合はセッションを作成
-    if request.user_preferences or request.favorite_spots:
-        session_id = conversation_service.create_session(
-            user_preferences=request.user_preferences,
-            favorite_spots=request.favorite_spots,
-        )
-    else:
-        session_id = request.session_id
+    # セッションを作成（常に新規作成）
+    session_id = conversation_service.create_session(
+        user_preferences=request.user_preferences,
+        favorite_spots=request.favorite_spots,
+    )
+
+    # 位置情報が提供された場合、セッションに設定してフェーズをスキップ
+    if request.current_location:
+        context = conversation_service.get_session(session_id)
+        if context:
+            # GPS座標から住所を設定（住所が提供されている場合はそれを使用）
+            if request.current_location.address:
+                context.current_location = request.current_location.address
+            else:
+                # GPS座標を文字列として設定
+                context.current_location = (
+                    f"{request.current_location.latitude}, "
+                    f"{request.current_location.longitude}"
+                )
+            # 位置情報があるので、目的地質問フェーズにスキップ
+            from ..models.chat import ConversationPhase
+            context.phase = ConversationPhase.ASKING_DESTINATION
+            logger.info(f"[Start] 位置情報を設定: {context.current_location}")
 
     return conversation_service.get_welcome_message(session_id)
 

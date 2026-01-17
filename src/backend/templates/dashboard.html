@@ -123,16 +123,44 @@
             </div>
         </div>
 
+        <!-- Voice Transcription Display -->
+        <div id="transcription-panel" class="bg-slate-800 rounded-xl p-4 border border-slate-700 mb-4 hidden">
+            <div class="flex items-center space-x-2 mb-2">
+                <svg class="w-4 h-4 text-violet-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/>
+                </svg>
+                <span class="text-sm font-medium text-violet-300">音声認識中...</span>
+                <span id="asr-status" class="text-xs text-slate-500 ml-auto">待機中</span>
+            </div>
+            <div id="transcription-text" class="text-sm text-slate-300 min-h-[40px] p-2 bg-slate-700/50 rounded-lg">
+                <span class="text-slate-500">音声を入力してください...</span>
+            </div>
+        </div>
+
         <!-- Chat Input UI -->
         <div class="bg-slate-800 rounded-xl p-4 border border-slate-700">
-            <form id="chat-form">
+            <form id="chat-form" class="flex items-center space-x-3">
                 <input type="text"
                        id="message-input"
                        name="message"
-                       class="w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-400 focus:outline-none focus:border-blue-500 disabled:opacity-50"
+                       class="flex-1 bg-slate-700 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-400 focus:outline-none focus:border-blue-500 disabled:opacity-50"
                        placeholder="{% if session_started %}メッセージを入力してEnterで送信...{% else %}Startボタンを押してセッションを開始してください{% endif %}"
                        autocomplete="off"
                        {% if not session_started %}disabled{% endif %}>
+                <!-- Voice Input Button -->
+                <button type="button"
+                        id="voice-button"
+                        class="p-3 rounded-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed bg-slate-700 hover:bg-slate-600 text-slate-400 hover:text-violet-400"
+                        title="音声入力"
+                        {% if not session_started %}disabled{% endif %}>
+                    <svg id="mic-icon" class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/>
+                    </svg>
+                    <svg id="mic-recording-icon" class="w-6 h-6 hidden text-red-500" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
+                        <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+                    </svg>
+                </button>
             </form>
 
             <!-- Start / Stop Buttons -->
@@ -810,5 +838,288 @@
 
     // Log initial page load
     logApiCall('GET', '/', 200, 0);
+
+    // ========================================
+    // Voice Input (WebSocket + Web Audio API)
+    // ========================================
+    const voiceButton = document.getElementById('voice-button');
+    const micIcon = document.getElementById('mic-icon');
+    const micRecordingIcon = document.getElementById('mic-recording-icon');
+    const transcriptionPanel = document.getElementById('transcription-panel');
+    const transcriptionText = document.getElementById('transcription-text');
+    const asrStatus = document.getElementById('asr-status');
+
+    let voiceWs = null;
+    let audioContext = null;
+    let mediaStream = null;
+    let scriptProcessor = null;
+    let isRecording = false;
+
+    // Voice button click handler
+    voiceButton.addEventListener('click', async () => {
+        if (!isSessionActive) {
+            alert('セッションが開始されていません。Startボタンを押してください。');
+            return;
+        }
+
+        if (isRecording) {
+            stopVoiceRecording();
+        } else {
+            await startVoiceRecording();
+        }
+    });
+
+    // Start voice recording
+    async function startVoiceRecording() {
+        try {
+            // Request microphone access
+            mediaStream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    sampleRate: 16000,
+                    channelCount: 1,
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                }
+            });
+
+            // Connect to WebSocket
+            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${wsProtocol}//${window.location.host}/api/v1/ws/voice/${sessionId}`;
+
+            voiceWs = new WebSocket(wsUrl);
+
+            voiceWs.onopen = () => {
+                console.log('Voice WebSocket connected');
+                asrStatus.textContent = '接続中...';
+                logApiCall('WS', `/ws/voice/${sessionId}`, 'Connected', 0);
+
+                // Start ASR
+                voiceWs.send(JSON.stringify({ type: 'start_asr' }));
+            };
+
+            voiceWs.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                handleVoiceMessage(data);
+            };
+
+            voiceWs.onerror = (error) => {
+                console.error('Voice WebSocket error:', error);
+                asrStatus.textContent = 'エラー';
+                stopVoiceRecording();
+            };
+
+            voiceWs.onclose = () => {
+                console.log('Voice WebSocket closed');
+                asrStatus.textContent = '切断';
+            };
+
+            // Setup audio processing
+            audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                sampleRate: 16000
+            });
+
+            const source = audioContext.createMediaStreamSource(mediaStream);
+
+            // Use ScriptProcessorNode for PCM conversion
+            // Buffer size: 4096 samples
+            scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+
+            scriptProcessor.onaudioprocess = (event) => {
+                if (!isRecording || !voiceWs || voiceWs.readyState !== WebSocket.OPEN) {
+                    return;
+                }
+
+                const inputData = event.inputBuffer.getChannelData(0);
+                // Convert Float32Array to Int16Array (PCM 16-bit)
+                const pcmData = convertFloat32ToInt16(inputData);
+                // Send as binary
+                voiceWs.send(pcmData.buffer);
+            };
+
+            source.connect(scriptProcessor);
+            scriptProcessor.connect(audioContext.destination);
+
+            // Update UI
+            isRecording = true;
+            updateVoiceButtonUI(true);
+            transcriptionPanel.classList.remove('hidden');
+            transcriptionText.innerHTML = '<span class="text-slate-500">音声を入力してください...</span>';
+            asrStatus.textContent = '録音中...';
+
+        } catch (error) {
+            console.error('Failed to start voice recording:', error);
+            alert('マイクへのアクセスに失敗しました: ' + error.message);
+        }
+    }
+
+    // Stop voice recording
+    function stopVoiceRecording() {
+        isRecording = false;
+
+        // Stop audio processing
+        if (scriptProcessor) {
+            scriptProcessor.disconnect();
+            scriptProcessor = null;
+        }
+
+        if (audioContext) {
+            audioContext.close();
+            audioContext = null;
+        }
+
+        // Stop media stream
+        if (mediaStream) {
+            mediaStream.getTracks().forEach(track => track.stop());
+            mediaStream = null;
+        }
+
+        // Close WebSocket
+        if (voiceWs) {
+            if (voiceWs.readyState === WebSocket.OPEN) {
+                voiceWs.send(JSON.stringify({ type: 'stop_asr' }));
+            }
+            voiceWs.close();
+            voiceWs = null;
+        }
+
+        // Update UI
+        updateVoiceButtonUI(false);
+        asrStatus.textContent = '停止';
+    }
+
+    // Handle voice WebSocket messages
+    function handleVoiceMessage(data) {
+        console.log('Voice message:', data);
+
+        switch (data.type) {
+            case 'connected':
+                asrStatus.textContent = 'WebSocket接続完了';
+                break;
+
+            case 'asr_connected':
+                asrStatus.textContent = '音声認識開始';
+                break;
+
+            case 'transcription':
+                // Display transcription
+                if (data.is_final) {
+                    transcriptionText.innerHTML = `<span class="text-emerald-400">${escapeHtml(data.text)}</span>`;
+                    asrStatus.textContent = '認識完了';
+
+                    // Auto-fill message input
+                    if (data.text.trim()) {
+                        messageInput.value = data.text.trim();
+                        updateInputJsonDisplay(data.text.trim(), sessionId, turnCount);
+                    }
+                } else {
+                    transcriptionText.innerHTML = `<span class="text-slate-300">${escapeHtml(data.text)}</span><span class="animate-pulse">...</span>`;
+                    asrStatus.textContent = '認識中...';
+                }
+                break;
+
+            case 'response':
+                // LLM response received
+                turnCount = data.turn_count;
+                sessionTurn.textContent = turnCount;
+                progressIndicator.textContent = `質問 ${turnCount}/${maxTurns}`;
+
+                // Update output JSON display
+                updateOutputJson(data);
+                outputStatus.textContent = '200 OK';
+
+                // Add messages to chat
+                addMessage('user', messageInput.value || transcriptionText.textContent);
+                addMessage('assistant', data.message, data.suggestions);
+
+                // Update quick replies
+                updateQuickReplies(data.suggestions);
+
+                // Clear message input
+                messageInput.value = '';
+
+                // Log API call
+                logApiCall('WS', 'voice/response', 'OK', 0);
+
+                // Check if complete
+                if (data.is_complete) {
+                    document.getElementById('session-status').textContent = '"completed"';
+                    messageInput.placeholder = '会話が完了しました';
+                    stopVoiceRecording();
+                }
+                break;
+
+            case 'asr_error':
+                asrStatus.textContent = 'ASRエラー';
+                transcriptionText.innerHTML = `<span class="text-red-400">エラー: ${escapeHtml(data.message)}</span>`;
+                break;
+
+            case 'error':
+                asrStatus.textContent = 'エラー';
+                transcriptionText.innerHTML = `<span class="text-red-400">エラー: ${escapeHtml(data.message)}</span>`;
+                break;
+
+            case 'asr_stopped':
+                asrStatus.textContent = '停止';
+                break;
+
+            case 'pong':
+                // Heartbeat response
+                break;
+
+            default:
+                console.log('Unknown voice message type:', data.type);
+        }
+    }
+
+    // Update voice button UI
+    function updateVoiceButtonUI(recording) {
+        if (recording) {
+            voiceButton.classList.remove('bg-slate-700', 'hover:bg-slate-600', 'text-slate-400');
+            voiceButton.classList.add('bg-red-500', 'hover:bg-red-600', 'text-white', 'animate-pulse');
+            micIcon.classList.add('hidden');
+            micRecordingIcon.classList.remove('hidden');
+        } else {
+            voiceButton.classList.add('bg-slate-700', 'hover:bg-slate-600', 'text-slate-400');
+            voiceButton.classList.remove('bg-red-500', 'hover:bg-red-600', 'text-white', 'animate-pulse');
+            micIcon.classList.remove('hidden');
+            micRecordingIcon.classList.add('hidden');
+        }
+    }
+
+    // Convert Float32 audio samples to Int16 (PCM 16-bit)
+    function convertFloat32ToInt16(float32Array) {
+        const int16Array = new Int16Array(float32Array.length);
+        for (let i = 0; i < float32Array.length; i++) {
+            // Clamp to [-1, 1] range
+            const s = Math.max(-1, Math.min(1, float32Array[i]));
+            // Convert to 16-bit signed integer
+            int16Array[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+        }
+        return int16Array;
+    }
+
+    // Update resetUIToInitialState to include voice UI reset
+    const originalResetUI = resetUIToInitialState;
+    resetUIToInitialState = function() {
+        originalResetUI();
+
+        // Reset voice UI
+        stopVoiceRecording();
+        transcriptionPanel.classList.add('hidden');
+        transcriptionText.innerHTML = '<span class="text-slate-500">音声を入力してください...</span>';
+        asrStatus.textContent = '待機中';
+        voiceButton.disabled = true;
+    };
+
+    // Enable voice button when session starts
+    const originalStartHandler = startButton.onclick;
+    startButton.addEventListener('click', () => {
+        // Voice button will be enabled after session starts
+        setTimeout(() => {
+            if (isSessionActive) {
+                voiceButton.disabled = false;
+            }
+        }, 500);
+    });
 </script>
 {% endblock %}

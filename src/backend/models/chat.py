@@ -40,6 +40,15 @@ class ChatMessage(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.now)
 
 
+class LocationData(BaseModel):
+    """位置情報データ"""
+
+    latitude: float = Field(..., description="緯度")
+    longitude: float = Field(..., description="経度")
+    address: Optional[str] = Field(None, description="住所（逆ジオコーディング結果）")
+    accuracy: Optional[float] = Field(None, description="GPS精度（メートル）")
+
+
 class ChatRequest(BaseModel):
     """チャットリクエスト"""
 
@@ -47,7 +56,19 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = Field(None, description="セッションID")
     current_location: Optional[str] = Field(None, description="現在地（例: 東京駅）")
     destination: Optional[str] = Field(None, description="目的地（例: 横浜駅）")
-    context: Optional[dict] = Field(None, description="追加コンテキスト（お気に入り、履歴など）")
+    context: Optional[dict] = Field(
+        None, description="追加コンテキスト（お気に入り、履歴など）"
+    )
+    # モバイルアプリ対応の新規フィールド
+    response_type: Optional[str] = Field(
+        None, description="応答タイプ: 'text', 'voice', 'selection'"
+    )
+    selected_suggestion: Optional[str] = Field(
+        None, description="選択肢が選ばれた場合の値"
+    )
+    location_data: Optional[LocationData] = Field(
+        None, description="GPS座標形式の位置情報"
+    )
 
 
 class ChatResponse(BaseModel):
