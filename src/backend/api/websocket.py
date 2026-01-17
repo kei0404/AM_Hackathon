@@ -105,9 +105,14 @@ async def websocket_voice_endpoint(
 
     asr_client = None
 
+    # メインイベントループを取得（スレッドセーフな呼び出しに使用）
+    import asyncio
+    main_loop = asyncio.get_running_loop()
+
     async def process_transcription(text: str) -> None:
         """認識されたテキストをチャット処理"""
         try:
+            logger.info(f"チャット処理開始: {text}")
             request = ChatRequest(
                 message=text,
                 session_id=session_id,
@@ -123,6 +128,7 @@ async def websocket_voice_endpoint(
                 "is_complete": response.is_complete,
                 "suggestions": response.suggestions,
             })
+            logger.info(f"チャット処理完了: turn_count={response.turn_count}")
 
         except Exception as e:
             logger.error(f"チャット処理エラー: {e}")
@@ -131,11 +137,10 @@ async def websocket_voice_endpoint(
                 "message": f"処理エラー: {str(e)}",
             })
 
-    def on_transcription(text: str, is_final: bool) -> None:
-        """ASR認識結果コールバック"""
-        import asyncio
-
-        async def send_transcription():
+    async def send_transcription_async(text: str, is_final: bool) -> None:
+        """文字起こし結果を送信"""
+        try:
+            logger.info(f"文字起こし送信: text={text}, is_final={is_final}")
             await manager.send_json(session_id, {
                 "type": "transcription",
                 "text": text,
@@ -144,54 +149,60 @@ async def websocket_voice_endpoint(
             # 最終結果の場合、チャット処理を実行
             if is_final and text.strip():
                 await process_transcription(text)
-
-        # 非同期関数を実行
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.create_task(send_transcription())
-            else:
-                loop.run_until_complete(send_transcription())
         except Exception as e:
-            logger.error(f"transcription送信エラー: {e}")
+            logger.error(f"文字起こし送信エラー: {e}")
+
+    def on_transcription(text: str, is_final: bool) -> None:
+        """ASR認識結果コールバック（別スレッドから呼ばれる）"""
+        logger.info(f"on_transcription コールバック: text={text}, is_final={is_final}")
+        # メインイベントループにコルーチンをスケジュール
+        future = asyncio.run_coroutine_threadsafe(
+            send_transcription_async(text, is_final),
+            main_loop
+        )
+        # 結果を待機（タイムアウト10秒）
+        try:
+            future.result(timeout=10)
+        except Exception as e:
+            logger.error(f"on_transcription実行エラー: {e}")
+
+    async def send_asr_error_async(error: str) -> None:
+        """ASRエラーを送信"""
+        await manager.send_json(session_id, {
+            "type": "asr_error",
+            "message": error,
+        })
 
     def on_asr_error(error: str) -> None:
-        """ASRエラーコールバック"""
-        import asyncio
-
-        async def send_error():
-            await manager.send_json(session_id, {
-                "type": "asr_error",
-                "message": error,
-            })
-
+        """ASRエラーコールバック（別スレッドから呼ばれる）"""
+        logger.error(f"on_asr_error コールバック: {error}")
+        future = asyncio.run_coroutine_threadsafe(
+            send_asr_error_async(error),
+            main_loop
+        )
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.create_task(send_error())
-            else:
-                loop.run_until_complete(send_error())
+            future.result(timeout=10)
         except Exception as e:
-            logger.error(f"エラー送信エラー: {e}")
+            logger.error(f"on_asr_error実行エラー: {e}")
+
+    async def send_asr_connected_async() -> None:
+        """ASR接続完了を送信"""
+        await manager.send_json(session_id, {
+            "type": "asr_connected",
+            "message": "音声認識が開始されました",
+        })
 
     def on_asr_connected() -> None:
-        """ASR接続完了コールバック"""
-        import asyncio
-
-        async def send_connected():
-            await manager.send_json(session_id, {
-                "type": "asr_connected",
-                "message": "音声認識が開始されました",
-            })
-
+        """ASR接続完了コールバック（別スレッドから呼ばれる）"""
+        logger.info("on_asr_connected コールバック")
+        future = asyncio.run_coroutine_threadsafe(
+            send_asr_connected_async(),
+            main_loop
+        )
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.create_task(send_connected())
-            else:
-                loop.run_until_complete(send_connected())
+            future.result(timeout=10)
         except Exception as e:
-            logger.error(f"connected送信エラー: {e}")
+            logger.error(f"on_asr_connected実行エラー: {e}")
 
     try:
         while True:
