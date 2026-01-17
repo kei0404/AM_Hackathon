@@ -1,0 +1,471 @@
+{% extends "base.html" %}
+
+{% block title %}Data Plug Copilot - Data Flow Dashboard{% endblock %}
+
+{% block content %}
+<!-- Data Flow Overview Banner -->
+<div class="mb-6 p-4 bg-gradient-to-r from-blue-500/10 via-violet-500/10 to-emerald-500/10 rounded-2xl border border-slate-700">
+    <div class="flex items-center justify-between">
+        <div class="flex items-center space-x-4">
+            <div class="p-2 bg-blue-500/20 rounded-lg">
+                <svg class="w-6 h-6 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                </svg>
+            </div>
+            <div>
+                <h2 class="font-semibold">Data Flow Visualization</h2>
+                <p class="text-sm text-slate-400">LLMへの入力データと出力データをリアルタイムで確認</p>
+            </div>
+        </div>
+        <div class="flex items-center space-x-3">
+            <div class="flex items-center space-x-2 text-sm">
+                <span class="w-3 h-3 bg-blue-500 rounded-full"></span>
+                <span class="text-slate-400">Input</span>
+            </div>
+            <svg class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/>
+            </svg>
+            <div class="flex items-center space-x-2 text-sm">
+                <span class="w-3 h-3 bg-emerald-500 rounded-full"></span>
+                <span class="text-slate-400">Output</span>
+            </div>
+            <div class="ml-4 px-3 py-1 bg-slate-700 rounded-lg text-sm">
+                <span class="text-slate-400">Session:</span>
+                <span class="text-blue-400 mono ml-1">{{ session_id[:8] }}...</span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <!-- INPUT PANEL -->
+    <section class="space-y-4">
+        <div class="flex items-center space-x-3">
+            <div class="p-2 bg-blue-500/20 rounded-lg">
+                <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"/>
+                </svg>
+            </div>
+            <h2 class="text-lg font-semibold text-blue-400">INPUT - LLMへ送信するデータ</h2>
+        </div>
+
+        <!-- User Personal Data -->
+        <div class="data-panel rounded-xl border border-slate-700 overflow-hidden">
+            <div class="px-4 py-3 bg-slate-800/50 border-b border-slate-700 flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                    <span class="w-2 h-2 bg-blue-400 rounded-full"></span>
+                    <span class="font-medium text-sm">user_preferences</span>
+                </div>
+                <span class="text-xs text-slate-500 mono">Personal Data</span>
+            </div>
+            <div class="p-4 mono text-sm">
+                <pre class="whitespace-pre-wrap"><span class="json-key">{</span>
+  <span class="json-key">"genres"</span>: [{% for genre in user_preferences.genres %}<span class="json-string">"{{ genre }}"</span>{% if not loop.last %}, {% endif %}{% endfor %}],
+  <span class="json-key">"atmosphere"</span>: <span class="json-string">"{{ user_preferences.atmosphere }}"</span>,
+  <span class="json-key">"price_range"</span>: <span class="json-string">"{{ user_preferences.price_range }}"</span>
+<span class="json-key">}</span></pre>
+            </div>
+        </div>
+
+        <!-- Favorite Spots -->
+        <div class="data-panel rounded-xl border border-slate-700 overflow-hidden">
+            <div class="px-4 py-3 bg-slate-800/50 border-b border-slate-700 flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                    <span class="w-2 h-2 bg-blue-400 rounded-full"></span>
+                    <span class="font-medium text-sm">favorite_spots</span>
+                </div>
+                <span class="text-xs text-slate-500 mono">{{ favorite_spots|length }} items</span>
+            </div>
+            <div class="p-4 mono text-sm max-h-48 overflow-y-auto">
+                <pre class="whitespace-pre-wrap"><span class="json-key">[</span>{% for spot in favorite_spots %}
+  <span class="json-key">{</span>
+    <span class="json-key">"name"</span>: <span class="json-string">"{{ spot.name }}"</span>,
+    <span class="json-key">"category"</span>: <span class="json-string">"{{ spot.category }}"</span>
+  <span class="json-key">}</span>{% if not loop.last %},{% endif %}{% endfor %}
+<span class="json-key">]</span></pre>
+            </div>
+        </div>
+
+        <!-- User Message Input -->
+        <div id="input-panel" class="data-panel rounded-xl border-2 border-blue-500/50 animate-pulse-border overflow-hidden">
+            <div class="px-4 py-3 bg-blue-500/10 border-b border-slate-700 flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                    <span class="w-2 h-2 bg-blue-400 rounded-full animate-pulse"></span>
+                    <span class="font-medium text-sm text-blue-300">user_message</span>
+                </div>
+                <span class="text-xs text-blue-400 mono">Current Input</span>
+            </div>
+            <div id="input-json" class="p-4 mono text-sm">
+                <pre class="whitespace-pre-wrap"><span class="json-key">{</span>
+  <span class="json-key">"message"</span>: <span class="json-string" id="input-message-display">""</span>,
+  <span class="json-key">"session_id"</span>: <span class="json-string">"{{ session_id }}"</span>,
+  <span class="json-key">"turn_count"</span>: <span class="json-number" id="input-turn-display">{{ turn_count }}</span>
+<span class="json-key">}</span></pre>
+            </div>
+        </div>
+
+        <!-- Chat Input UI -->
+        <div class="bg-slate-800 rounded-xl p-4 border border-slate-700">
+            <form id="chat-form" class="flex items-center space-x-3">
+                <input type="text"
+                       id="message-input"
+                       name="message"
+                       class="flex-1 bg-slate-700 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
+                       placeholder="AIに相談する..."
+                       autocomplete="off">
+                <button type="submit"
+                        id="send-button"
+                        class="p-3 bg-blue-500 hover:bg-blue-600 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
+                    </svg>
+                </button>
+            </form>
+            <div id="quick-replies" class="flex flex-wrap gap-2 mt-3">
+                <span class="text-xs text-slate-500">Quick:</span>
+                {% for suggestion in suggestions %}
+                <button class="quick-reply px-3 py-1 bg-slate-700 hover:bg-slate-600 rounded-full text-xs text-slate-300 transition-colors">
+                    {{ suggestion }}
+                </button>
+                {% endfor %}
+            </div>
+        </div>
+    </section>
+
+    <!-- OUTPUT PANEL -->
+    <section class="space-y-4">
+        <div class="flex items-center space-x-3">
+            <div class="p-2 bg-emerald-500/20 rounded-lg">
+                <svg class="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+            </div>
+            <h2 class="text-lg font-semibold text-emerald-400">OUTPUT - LLMからの応答</h2>
+        </div>
+
+        <!-- LLM Response Data -->
+        <div id="output-panel" class="data-panel rounded-xl border-2 border-emerald-500/50 overflow-hidden">
+            <div class="px-4 py-3 bg-emerald-500/10 border-b border-slate-700 flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                    <span id="output-status-dot" class="w-2 h-2 bg-emerald-400 rounded-full"></span>
+                    <span class="font-medium text-sm text-emerald-300">llm_response</span>
+                </div>
+                <span id="output-status" class="text-xs text-emerald-400 mono">Waiting...</span>
+            </div>
+            <div id="output-json" class="p-4 mono text-sm max-h-64 overflow-y-auto">
+                <pre id="output-json-content" class="whitespace-pre-wrap"><span class="json-key">{</span>
+  <span class="json-key">"message"</span>: <span class="json-string">"{{ welcome_message | replace('\n', '\\n') }}"</span>,
+  <span class="json-key">"suggestions"</span>: [{% for s in suggestions %}<span class="json-string">"{{ s }}"</span>{% if not loop.last %}, {% endif %}{% endfor %}],
+  <span class="json-key">"turn_count"</span>: <span class="json-number">{{ turn_count }}</span>,
+  <span class="json-key">"is_complete"</span>: <span class="json-boolean">{{ 'true' if is_complete else 'false' }}</span>
+<span class="json-key">}</span></pre>
+            </div>
+        </div>
+
+        <!-- Rendered Chat Response -->
+        <div class="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+            <div class="px-4 py-3 bg-slate-800/50 border-b border-slate-700 flex items-center justify-between">
+                <span class="text-sm font-medium text-slate-400">Rendered UI</span>
+                <span id="progress-indicator" class="text-xs text-slate-500">質問 {{ turn_count }}/{{ max_turns }}</span>
+            </div>
+            <div id="chat-container" class="p-4 space-y-4 max-h-80 overflow-y-auto">
+                <!-- AI Welcome Message -->
+                <div class="flex items-start space-x-3">
+                    <div class="w-8 h-8 bg-gradient-to-br from-violet-500 to-blue-500 rounded-full flex items-center justify-center flex-shrink-0">
+                        <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                        </svg>
+                    </div>
+                    <div class="flex-1">
+                        <div class="bg-slate-700 rounded-2xl rounded-tl-none p-4">
+                            <p id="ai-message" class="text-sm text-slate-200 whitespace-pre-line">{{ welcome_message }}</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Session Info -->
+        <div class="data-panel rounded-xl border border-slate-700 overflow-hidden">
+            <div class="px-4 py-3 bg-slate-800/50 border-b border-slate-700 flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                    <span class="w-2 h-2 bg-amber-400 rounded-full"></span>
+                    <span class="font-medium text-sm">session_state</span>
+                </div>
+                <span class="text-xs text-slate-500 mono">Metadata</span>
+            </div>
+            <div class="p-4 mono text-sm">
+                <pre class="whitespace-pre-wrap"><span class="json-key">{</span>
+  <span class="json-key">"session_id"</span>: <span class="json-string">"{{ session_id }}"</span>,
+  <span class="json-key">"status"</span>: <span class="json-string" id="session-status">"active"</span>,
+  <span class="json-key">"turn_count"</span>: <span class="json-number" id="session-turn">{{ turn_count }}</span>,
+  <span class="json-key">"max_turns"</span>: <span class="json-number">{{ max_turns }}</span>,
+  <span class="json-key">"data_scope"</span>: [<span class="json-string">"preferences"</span>, <span class="json-string">"favorites"</span>]
+<span class="json-key">}</span></pre>
+            </div>
+        </div>
+    </section>
+</div>
+
+<!-- API Call Log -->
+<section class="mt-8">
+    <div class="flex items-center justify-between mb-4">
+        <div class="flex items-center space-x-3">
+            <div class="p-2 bg-amber-500/20 rounded-lg">
+                <svg class="w-5 h-5 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+                </svg>
+            </div>
+            <h2 class="text-lg font-semibold text-amber-400">API Call Log</h2>
+        </div>
+        <button id="clear-log" class="text-sm text-slate-400 hover:text-white transition-colors">Clear Log</button>
+    </div>
+
+    <div class="bg-slate-800 rounded-xl border border-slate-700 overflow-hidden">
+        <div id="api-log" class="divide-y divide-slate-700 max-h-48 overflow-y-auto">
+            <div class="p-4 text-sm text-slate-500 text-center">
+                API呼び出しログがここに表示されます
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const sessionId = "{{ session_id }}";
+    let turnCount = {{ turn_count }};
+    const maxTurns = {{ max_turns }};
+
+    // DOM elements
+    const chatForm = document.getElementById('chat-form');
+    const messageInput = document.getElementById('message-input');
+    const sendButton = document.getElementById('send-button');
+    const chatContainer = document.getElementById('chat-container');
+    const apiLog = document.getElementById('api-log');
+    const inputMessageDisplay = document.getElementById('input-message-display');
+    const inputTurnDisplay = document.getElementById('input-turn-display');
+    const outputJsonContent = document.getElementById('output-json-content');
+    const outputStatus = document.getElementById('output-status');
+    const outputStatusDot = document.getElementById('output-status-dot');
+    const progressIndicator = document.getElementById('progress-indicator');
+    const sessionTurn = document.getElementById('session-turn');
+    const quickReplies = document.querySelectorAll('.quick-reply');
+
+    // Update input display when typing
+    messageInput.addEventListener('input', (e) => {
+        inputMessageDisplay.textContent = `"${e.target.value}"`;
+    });
+
+    // Quick reply buttons
+    quickReplies.forEach(btn => {
+        btn.addEventListener('click', () => {
+            messageInput.value = btn.textContent.trim();
+            inputMessageDisplay.textContent = `"${btn.textContent.trim()}"`;
+            messageInput.focus();
+        });
+    });
+
+    // Form submission
+    chatForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        const message = messageInput.value.trim();
+        if (!message) return;
+
+        // Disable input
+        sendButton.disabled = true;
+        messageInput.disabled = true;
+
+        // Update input display
+        inputMessageDisplay.textContent = `"${message}"`;
+        inputTurnDisplay.textContent = turnCount;
+
+        // Add user message to chat
+        addMessage('user', message);
+
+        // Show loading state
+        outputStatus.textContent = 'Loading...';
+        outputStatusDot.classList.add('animate-pulse');
+
+        const startTime = Date.now();
+
+        try {
+            const response = await fetch('/api/v1/chat/message', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    message: message,
+                    session_id: sessionId,
+                }),
+            });
+
+            const endTime = Date.now();
+            const duration = endTime - startTime;
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            const data = await response.json();
+
+            // Update turn count
+            turnCount = data.turn_count;
+            sessionTurn.textContent = turnCount;
+            inputTurnDisplay.textContent = turnCount;
+            progressIndicator.textContent = `質問 ${turnCount}/${maxTurns}`;
+
+            // Update output JSON display
+            updateOutputJson(data);
+
+            // Add AI message to chat
+            addMessage('assistant', data.message, data.suggestions);
+
+            // Update quick replies
+            updateQuickReplies(data.suggestions);
+
+            // Log API call
+            logApiCall('POST', '/api/v1/chat/message', response.status, duration);
+
+            // Update status
+            outputStatus.textContent = `${response.status} OK`;
+            outputStatusDot.classList.remove('animate-pulse');
+
+            // Check if complete
+            if (data.is_complete) {
+                document.getElementById('session-status').textContent = '"completed"';
+                messageInput.placeholder = '目的地が決定しました！';
+            }
+
+        } catch (error) {
+            console.error('Error:', error);
+            outputStatus.textContent = 'Error';
+            outputStatusDot.classList.remove('animate-pulse');
+            outputStatusDot.classList.remove('bg-emerald-400');
+            outputStatusDot.classList.add('bg-red-400');
+            logApiCall('POST', '/api/v1/chat/message', 'Error', 0);
+        } finally {
+            // Re-enable input
+            sendButton.disabled = false;
+            messageInput.disabled = false;
+            messageInput.value = '';
+            messageInput.focus();
+        }
+    });
+
+    function addMessage(role, content, suggestions = []) {
+        const messageDiv = document.createElement('div');
+        messageDiv.className = 'flex items-start space-x-3';
+
+        if (role === 'user') {
+            messageDiv.innerHTML = `
+                <div class="flex-1 flex justify-end">
+                    <div class="bg-blue-500 rounded-2xl rounded-tr-none p-4 max-w-[80%]">
+                        <p class="text-sm text-white">${escapeHtml(content)}</p>
+                    </div>
+                </div>
+                <div class="w-8 h-8 bg-slate-600 rounded-full flex items-center justify-center flex-shrink-0">
+                    <svg class="w-4 h-4 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+                    </svg>
+                </div>
+            `;
+        } else {
+            messageDiv.innerHTML = `
+                <div class="w-8 h-8 bg-gradient-to-br from-violet-500 to-blue-500 rounded-full flex items-center justify-center flex-shrink-0">
+                    <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                    </svg>
+                </div>
+                <div class="flex-1">
+                    <div class="bg-slate-700 rounded-2xl rounded-tl-none p-4">
+                        <p class="text-sm text-slate-200 whitespace-pre-line">${escapeHtml(content)}</p>
+                    </div>
+                </div>
+            `;
+        }
+
+        chatContainer.appendChild(messageDiv);
+        chatContainer.scrollTop = chatContainer.scrollHeight;
+    }
+
+    function updateOutputJson(data) {
+        const suggestionsStr = data.suggestions.map(s => `<span class="json-string">"${escapeHtml(s)}"</span>`).join(', ');
+        const messageStr = escapeHtml(data.message).replace(/\n/g, '\\n');
+
+        outputJsonContent.innerHTML = `<span class="json-key">{</span>
+  <span class="json-key">"message"</span>: <span class="json-string">"${messageStr}"</span>,
+  <span class="json-key">"suggestions"</span>: [${suggestionsStr}],
+  <span class="json-key">"turn_count"</span>: <span class="json-number">${data.turn_count}</span>,
+  <span class="json-key">"is_complete"</span>: <span class="json-boolean">${data.is_complete}</span>
+<span class="json-key">}</span>`;
+    }
+
+    function updateQuickReplies(suggestions) {
+        const container = document.getElementById('quick-replies');
+        container.innerHTML = '<span class="text-xs text-slate-500">Quick:</span>';
+
+        suggestions.forEach(suggestion => {
+            const btn = document.createElement('button');
+            btn.className = 'quick-reply px-3 py-1 bg-slate-700 hover:bg-slate-600 rounded-full text-xs text-slate-300 transition-colors';
+            btn.textContent = suggestion;
+            btn.addEventListener('click', () => {
+                messageInput.value = suggestion;
+                inputMessageDisplay.textContent = `"${suggestion}"`;
+                messageInput.focus();
+            });
+            container.appendChild(btn);
+        });
+    }
+
+    function logApiCall(method, endpoint, status, duration) {
+        const logEntry = document.createElement('div');
+        logEntry.className = 'p-4 hover:bg-slate-700/50 transition-colors';
+
+        const statusClass = status === 200 || status === '200 OK' ? 'text-emerald-400' : 'text-red-400';
+        const now = new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+        logEntry.innerHTML = `
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-3">
+                    <span class="px-2 py-1 bg-emerald-500/20 text-emerald-400 text-xs font-medium rounded">${method}</span>
+                    <span class="mono text-sm text-slate-300">${endpoint}</span>
+                </div>
+                <div class="flex items-center space-x-4 text-sm">
+                    <span class="${statusClass}">${status}</span>
+                    <span class="text-slate-500">${duration}ms</span>
+                    <span class="text-slate-500 mono text-xs">${now}</span>
+                </div>
+            </div>
+        `;
+
+        // Remove placeholder if exists
+        const placeholder = apiLog.querySelector('.text-center');
+        if (placeholder) {
+            placeholder.remove();
+        }
+
+        apiLog.insertBefore(logEntry, apiLog.firstChild);
+    }
+
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    // Clear log button
+    document.getElementById('clear-log').addEventListener('click', () => {
+        apiLog.innerHTML = `
+            <div class="p-4 text-sm text-slate-500 text-center">
+                API呼び出しログがここに表示されます
+            </div>
+        `;
+    });
+
+    // Log initial page load
+    logApiCall('GET', '/', 200, 0);
+</script>
+{% endblock %}
