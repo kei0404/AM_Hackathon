@@ -49,3 +49,7 @@ yarn-error.log*
 # Cursor IDE
 .cursor/
 
+# Data directories (user data and vector DB)
+data/
+chroma_data/
+

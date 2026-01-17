@@ -10,7 +10,11 @@ from pydantic import BaseModel
 
 from ..models.chat import ChatRequest, ChatResponse
 from ..services.conversation_service import conversation_service
-from ..services.sample_data import get_all_sample_data
+from ..services.sample_data import (
+    clear_data_files,
+    get_data_from_files,
+    save_sample_data_to_files,
+)
 from ..services.vector_store import vector_store
 
 logger = logging.getLogger(__name__)
@@ -38,25 +42,38 @@ async def start_conversation(request: WelcomeRequest) -> ChatResponse:
     """
     会話を開始してウェルカムメッセージを取得する
 
-    - セッションIDが指定されていない場合は新規作成
-    - ユーザーの嗜好やお気に入りを渡すことで、よりパーソナライズされた応答が可能
-    - サンプルデータをベクトルDBに格納する
+    処理フロー:
+    1. sample_data.py のデータ → data/user_data/*.json に保存
+    2. 同時に data/chroma にベクトルDBとして登録
     """
-    # ベクトルDBにサンプルデータを格納
     try:
-        sample_data = get_all_sample_data()
-        doc_ids = [d["id"] for d in sample_data]
-        texts = [d["text"] for d in sample_data]
-        metadatas = [d["metadata"] for d in sample_data]
+        # VectorStoreを先に再初期化
+        vector_store.reinitialize()
+        logger.info("[Start] VectorStore再初期化完了")
 
-        vector_store.add_documents(
-            doc_ids=doc_ids,
-            texts=texts,
-            metadatas=metadatas,
-        )
-        logger.info(f"ベクトルDBにサンプルデータを格納: {len(sample_data)}件")
+        # sample_data.py の VISIT_RECORDS を data/user_data/*.json に保存
+        saved_count = save_sample_data_to_files()
+        logger.info(f"[Start] data/user_data に保存: {saved_count}件")
+
+        # ファイルからデータを読み込み、ベクトル化してChromaDBに登録
+        vector_data = get_data_from_files()
+        logger.info(f"[Start] ベクトル化対象: {len(vector_data)}件")
+
+        if vector_data:
+            doc_ids = [d["id"] for d in vector_data]
+            texts = [d["text"] for d in vector_data]
+            metadatas = [d["metadata"] for d in vector_data]
+
+            vector_store.add_documents(
+                doc_ids=doc_ids,
+                texts=texts,
+                metadatas=metadatas,
+            )
+
+            count = vector_store.count()
+            logger.info(f"[Start] ChromaDB登録完了: {count}件")
     except Exception as e:
-        logger.error(f"サンプルデータの格納に失敗: {e}")
+        logger.error(f"[Start] データ初期化エラー: {e}", exc_info=True)
 
     # ユーザー情報がある場合はセッションを作成
     if request.user_preferences or request.favorite_spots:
@@ -110,22 +127,30 @@ async def end_session(session_id: str) -> SessionResponse:
 
     - プライバシー・バイ・デザイン原則に基づき、セッションデータを完全に削除
     - ベクトルDBのデータも削除
+    - data/user_data 内のファイルも削除
     """
     # 会話キャッシュを削除
     success = conversation_service.delete_session(session_id)
     if not success:
         raise HTTPException(status_code=404, detail="セッションが見つかりません")
 
-    # ベクトルDBのデータをクリア
+    # ベクトルDBのデータを完全に削除（永続化ファイルも含む）
     try:
-        vector_store.clear_collection()
-        logger.info(f"ベクトルDBのデータをクリア: session_id={session_id}")
+        vector_store.clear_all_data()
+        logger.info(f"ベクトルDBのデータを完全消去: session_id={session_id}")
     except Exception as e:
-        logger.error(f"ベクトルDBのクリアに失敗: {e}")
+        logger.error(f"ベクトルDBの消去に失敗: {e}")
+
+    # data/user_data 内のファイルを削除
+    try:
+        deleted_count = clear_data_files()
+        logger.info(f"データファイルを削除: {deleted_count}件")
+    except Exception as e:
+        logger.error(f"データファイルの削除に失敗: {e}")
 
     return SessionResponse(
         session_id=session_id,
-        message="セッションを終了し、ベクトルDBと会話キャッシュを消去しました",
+        message="セッションを終了し、ベクトルDB・会話キャッシュ・データファイルを消去しました",
     )
 
 
@@ -181,4 +206,25 @@ async def cleanup_expired_sessions() -> dict:
         "cleaned_sessions": cleaned,
         "message": f"{cleaned}件の期限切れセッションを削除しました",
         "current_stats": stats,
+    }
+
+
+@router.get("/debug/vector-store", response_model=dict)
+async def debug_vector_store() -> dict:
+    """
+    ベクトルストアのデバッグ情報を取得する
+    """
+    from pathlib import Path
+
+    from ..config import settings
+
+    persist_dir = Path(settings.CHROMA_PERSIST_DIR)
+
+    return {
+        "persist_dir": str(persist_dir),
+        "persist_dir_exists": persist_dir.exists(),
+        "persist_dir_contents": [str(p) for p in persist_dir.iterdir()] if persist_dir.exists() else [],
+        "collection_name": settings.CHROMA_COLLECTION_NAME,
+        "document_count": vector_store.count(),
+        "collection_metadata": vector_store.collection.metadata if vector_store.collection else None,
     }

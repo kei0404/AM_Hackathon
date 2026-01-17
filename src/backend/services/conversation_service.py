@@ -17,6 +17,7 @@ from ..models.chat import (
     MessageRole,
 )
 from .llm_service import llm_service
+from .vector_store import vector_store
 
 logger = logging.getLogger(__name__)
 
@@ -289,6 +290,25 @@ class ConversationService:
         """期限切れセッションをクリーンアップ"""
         return self._cache.cleanup()
 
+    def _search_relevant_places(self, query: str, n_results: int = 5) -> list[dict]:
+        """
+        ベクトルDBから関連する場所を検索する（RAG検索）
+
+        Args:
+            query: 検索クエリ
+            n_results: 結果の最大数
+
+        Returns:
+            検索結果のリスト
+        """
+        try:
+            results = vector_store.search(query=query, n_results=n_results)
+            logger.info(f"RAG検索結果: {len(results)}件")
+            return results
+        except Exception as e:
+            logger.error(f"RAG検索エラー: {e}")
+            return []
+
     def process_message(self, request: ChatRequest) -> ChatResponse:
         """
         ユーザーメッセージを処理してレスポンスを生成する
@@ -313,6 +333,12 @@ class ConversationService:
 
         context = self._cache.get(session_id)
 
+        # 現在地・目的地を更新（リクエストに含まれている場合）
+        if request.current_location:
+            context.current_location = request.current_location
+        if request.destination:
+            context.destination = request.destination
+
         # ユーザーメッセージを履歴に追加
         user_message = ChatMessage(
             role=MessageRole.USER,
@@ -321,12 +347,17 @@ class ConversationService:
         )
         context.messages.append(user_message)
 
-        # LLMで応答を生成
-        llm_result = llm_service.generate_destination_question(
+        # RAG検索: ユーザーメッセージに関連する訪問履歴を検索
+        rag_results = self._search_relevant_places(request.message, n_results=5)
+
+        # LLMで応答を生成（RAG結果をコンテキストとして渡す）
+        llm_result = llm_service.generate_stopover_suggestion(
             user_message=request.message,
             turn_count=context.turn_count,
+            current_location=context.current_location,
+            destination=context.destination,
+            rag_results=rag_results,
             user_preferences=context.user_preferences,
-            favorite_spots=context.favorite_spots,
         )
 
         # AIメッセージを履歴に追加
@@ -366,8 +397,8 @@ class ConversationService:
 
         welcome_message = (
             "こんにちは！Data Plug Copilotです。\n"
-            "今日はどこに行きたいですか？\n"
-            "あなたのお気に入りや訪問履歴を参考に、最適な場所をご提案します。"
+            "目的地までのルートで、立ち寄りたい場所はありますか？\n"
+            "あなたの訪問履歴を参考に、おすすめの場所をご提案します。"
         )
 
         context = self._cache.get(session_id)
@@ -386,7 +417,7 @@ class ConversationService:
             session_id=session_id,
             turn_count=0,
             is_complete=False,
-            suggestions=["カフェに行きたい", "自然を楽しみたい", "新しい場所を探したい"],
+            suggestions=["カフェで休憩したい", "美味しいものが食べたい", "景色の良い場所に寄りたい"],
         )
 
 

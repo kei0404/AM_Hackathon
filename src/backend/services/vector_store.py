@@ -27,7 +27,10 @@ class VectorStore:
         # ChromaDBクライアントを初期化
         self.client = chromadb.PersistentClient(
             path=str(persist_dir),
-            settings=ChromaSettings(anonymized_telemetry=False),
+            settings=ChromaSettings(
+                anonymized_telemetry=False,
+                allow_reset=True,
+            ),
         )
 
         # コレクションを取得または作成
@@ -80,8 +83,11 @@ class VectorStore:
             texts: テキストのリスト
             metadatas: メタデータのリスト
         """
+        logger.info(f"Embedding生成開始: {len(texts)}件のテキスト")
         embeddings = embedding_service.get_embeddings(texts)
+        logger.info(f"Embedding生成完了: {len(embeddings)}件, 次元数={len(embeddings[0]) if embeddings else 0}")
 
+        logger.info(f"ChromaDB upsert開始: コレクション={self.collection.name}")
         self.collection.upsert(
             ids=doc_ids,
             embeddings=embeddings,
@@ -89,7 +95,9 @@ class VectorStore:
             metadatas=metadatas or [{} for _ in doc_ids],
         )
 
-        logger.info(f"バッチドキュメント追加: {len(doc_ids)}件")
+        # 登録後の件数を確認
+        current_count = self.collection.count()
+        logger.info(f"バッチドキュメント追加完了: {len(doc_ids)}件, コレクション内総数: {current_count}件")
 
     def search(
         self,
@@ -213,6 +221,32 @@ class VectorStore:
         """コレクション内のドキュメント数を取得"""
         return self.collection.count()
 
+    def reinitialize(self) -> None:
+        """VectorStoreを再初期化する（Startエンドポイント用）"""
+        # クライアントが無効な場合は新規作成
+        if self.client is None:
+            persist_dir = Path(settings.CHROMA_PERSIST_DIR)
+            persist_dir.mkdir(parents=True, exist_ok=True)
+            self.client = chromadb.PersistentClient(
+                path=str(persist_dir),
+                settings=ChromaSettings(
+                    anonymized_telemetry=False,
+                    allow_reset=True,
+                ),
+            )
+
+        # コレクションをクリアして再作成
+        try:
+            self.client.delete_collection(settings.CHROMA_COLLECTION_NAME)
+        except Exception:
+            pass  # コレクションが存在しない場合は無視
+
+        self.collection = self.client.get_or_create_collection(
+            name=settings.CHROMA_COLLECTION_NAME,
+            metadata={"description": "Data Plug Copilot ユーザーデータ"},
+        )
+        logger.info(f"VectorStore再初期化完了: コレクション={settings.CHROMA_COLLECTION_NAME}")
+
     def clear_collection(self) -> None:
         """コレクション内の全データを削除（開発用）"""
         # コレクションを削除して再作成
@@ -222,6 +256,25 @@ class VectorStore:
             metadata={"description": "Data Plug Copilot ユーザーデータ"},
         )
         logger.warning("コレクションをクリアしました")
+
+    def clear_all_data(self) -> None:
+        """
+        コレクション内の全データを削除する
+        （プライバシー・バイ・デザイン: セッション終了時のデータ消去用）
+        """
+        # コレクションを削除して再作成（データのみ削除、ディレクトリは保持）
+        try:
+            self.client.delete_collection(settings.CHROMA_COLLECTION_NAME)
+            logger.info(f"コレクション削除: {settings.CHROMA_COLLECTION_NAME}")
+        except Exception as e:
+            logger.warning(f"コレクション削除エラー（無視）: {e}")
+
+        # 空のコレクションを再作成
+        self.collection = self.client.get_or_create_collection(
+            name=settings.CHROMA_COLLECTION_NAME,
+            metadata={"description": "Data Plug Copilot ユーザーデータ"},
+        )
+        logger.info("ChromaDBコレクションをクリアしました")
 
 
 # シングルトンインスタンス

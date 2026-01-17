@@ -156,6 +156,164 @@ class LLMService:
         response = self.generate_response(messages)
         return self._parse_response(response, turn_count)
 
+    def generate_stopover_suggestion(
+        self,
+        user_message: str,
+        turn_count: int,
+        current_location: Optional[str] = None,
+        destination: Optional[str] = None,
+        rag_results: Optional[list[dict]] = None,
+        user_preferences: Optional[dict] = None,
+    ) -> dict:
+        """
+        立ち寄り場所の提案を生成する（RAG検索結果を使用）
+
+        Args:
+            user_message: ユーザーからのメッセージ
+            turn_count: 現在の質問回数
+            current_location: 現在地
+            destination: 目的地
+            rag_results: RAG検索結果（訪問履歴など）
+            user_preferences: ユーザーの嗜好設定
+
+        Returns:
+            LLMの応答と選択肢を含む辞書
+        """
+        system_prompt = self._build_stopover_prompt(
+            turn_count=turn_count,
+            current_location=current_location,
+            destination=destination,
+            rag_results=rag_results,
+            user_preferences=user_preferences,
+        )
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ]
+
+        if self.demo_mode:
+            response = self._generate_stopover_demo_response(
+                user_message, rag_results, current_location, destination
+            )
+        else:
+            response = self.generate_response(messages)
+
+        return self._parse_response(response, turn_count)
+
+    def _build_stopover_prompt(
+        self,
+        turn_count: int,
+        current_location: Optional[str] = None,
+        destination: Optional[str] = None,
+        rag_results: Optional[list[dict]] = None,
+        user_preferences: Optional[dict] = None,
+    ) -> str:
+        """立ち寄り場所提案用のシステムプロンプトを構築する"""
+        remaining_turns = settings.MAX_CONVERSATION_TURNS - turn_count
+
+        prompt = f"""あなたは「Data Plug Copilot」のAIアシスタントです。
+ユーザーが車で移動中に立ち寄りたい場所を提案します。
+
+【ルート情報】
+- 現在地: {current_location or "未設定"}
+- 目的地: {destination or "未設定"}
+
+【重要なルール】
+- ユーザーの過去の訪問履歴や感想を参考に、ルート上で立ち寄れる場所を提案してください
+- 残り{remaining_turns}回の会話で立ち寄り場所を1つに絞り込んでください
+- 選択肢は必ず3つ以内で提示してください
+- 回答は簡潔に、運転中でも理解しやすいようにしてください
+- 提案する場所は、ユーザーの過去の感想を引用して説明してください
+
+【選択肢の出力形式】
+[選択肢]
+1. 選択肢1
+2. 選択肢2
+3. 選択肢3
+
+"""
+        # RAG検索結果（訪問履歴）をコンテキストとして追加
+        if rag_results:
+            prompt += "【ユーザーの訪問履歴（参考情報）】\n"
+            for i, result in enumerate(rag_results, 1):
+                metadata = result.get("metadata", {})
+                place_name = metadata.get("place_name", "不明")
+                address = metadata.get("address", "")
+                impression = metadata.get("impression", "")
+                visit_datetime = metadata.get("datetime", "")
+
+                prompt += f"{i}. {place_name}\n"
+                if address:
+                    prompt += f"   住所: {address}\n"
+                if visit_datetime:
+                    prompt += f"   訪問日時: {visit_datetime}\n"
+                if impression:
+                    prompt += f"   感想: {impression}\n"
+                prompt += "\n"
+
+        # ユーザー嗜好
+        if user_preferences:
+            pref_str = ", ".join(f"{k}: {v}" for k, v in user_preferences.items())
+            prompt += f"\n【ユーザーの嗜好】\n{pref_str}\n"
+
+        if turn_count >= settings.MAX_CONVERSATION_TURNS - 1:
+            prompt += """
+【最終確認】
+これが最後の質問です。具体的な立ち寄り場所を1つ提案し、確認してください。
+"""
+        return prompt
+
+    def _generate_stopover_demo_response(
+        self,
+        user_message: str,
+        rag_results: Optional[list[dict]] = None,
+        current_location: Optional[str] = None,
+        destination: Optional[str] = None,
+    ) -> str:
+        """デモモード用の立ち寄り提案レスポンスを生成"""
+        # RAG検索結果から場所を抽出
+        places = []
+        if rag_results:
+            for result in rag_results[:3]:
+                metadata = result.get("metadata", {})
+                place_name = metadata.get("place_name", "")
+                impression = metadata.get("impression", "")
+                if place_name:
+                    places.append({"name": place_name, "impression": impression})
+
+        route_info = ""
+        if current_location and destination:
+            route_info = f"【ルート】{current_location} → {destination}\n\n"
+
+        if not places:
+            return f"""{route_info}申し訳ありません、訪問履歴から適切な立ち寄り場所が見つかりませんでした。
+
+どんな場所に立ち寄りたいですか？
+
+[選択肢]
+1. カフェで休憩したい
+2. 食事をしたい
+3. 観光スポットに寄りたい"""
+
+        # 検索結果を使って提案を生成
+        response = f"""{route_info}あなたの過去の訪問履歴から、ルート上でおすすめの立ち寄りスポットを見つけました！
+
+"""
+        for i, place in enumerate(places, 1):
+            response += f"**{i}. {place['name']}**\n"
+            if place['impression']:
+                response += f"   前回の感想: 「{place['impression'][:50]}...」\n\n"
+
+        response += """どの場所に立ち寄りますか？
+
+[選択肢]
+"""
+        for i, place in enumerate(places, 1):
+            response += f"{i}. {place['name']}\n"
+
+        return response
+
     def _build_system_prompt(
         self,
         turn_count: int,

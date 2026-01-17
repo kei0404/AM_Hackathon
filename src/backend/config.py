@@ -21,7 +21,10 @@ class Settings:
 
     # Qwen モデル設定
     QWEN_MODEL: str = "qwen-plus"
-    QWEN_BASE_URL: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    QWEN_BASE_URL: str = os.getenv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+
+    # DashScope API ベースURL（国際版対応）
+    DASHSCOPE_BASE_URL: str = os.getenv("DASHSCOPE_BASE_URL", "https://dashscope-intl.aliyuncs.com/api/v1")
 
     # Embedding モデル設定
     EMBEDDING_API_KEY: str = os.getenv("EMBEDDING_API_KEY", "")

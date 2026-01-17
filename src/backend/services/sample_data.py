@@ -1,7 +1,30 @@
 """
 サンプルデータ - ベクトルDB初期化用
 訪問履歴データ形式: 日時、住所、場所の名前、感想
+
+データフロー:
+1. このファイル(sample_data.py)の VISIT_RECORDS がマスターデータ
+2. Start時: VISIT_RECORDS → data/user_data/user_data.json に保存
+3. ベクトル化: data/user_data/*.json → ChromaDB に登録
+4. Stop時: data/user_data/*.json と ChromaDB のデータを削除
+
+データファイル形式:
+- 1ファイルあたり最大5000件
+- user_data.json, user_data_1.json, user_data_2.json, ...
 """
+
+import json
+import logging
+from pathlib import Path
+from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+# データ保存ディレクトリ
+DATA_DIR = Path(__file__).resolve().parent.parent.parent.parent / "data" / "user_data"
+
+# 1ファイルあたりの最大レコード数
+MAX_RECORDS_PER_FILE = 5000
 
 # 訪問履歴のサンプルデータ
 VISIT_RECORDS = [
@@ -78,31 +101,179 @@ VISIT_RECORDS = [
 ]
 
 
-def get_all_sample_data() -> list[dict]:
-    """すべてのサンプルデータを取得"""
+def ensure_data_dir() -> Path:
+    """データディレクトリを作成して返す"""
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    return DATA_DIR
+
+
+def save_sample_data_to_files() -> int:
+    """
+    サンプルデータを data/user_data に統合JSONファイルとして保存する
+    5000件を超える場合はファイルを分割する
+
+    Returns:
+        保存したレコード数
+    """
+    data_dir = ensure_data_dir()
+
+    # レコードを分割して保存
+    total_records = len(VISIT_RECORDS)
+    file_index = 0
+    saved_count = 0
+
+    for i in range(0, total_records, MAX_RECORDS_PER_FILE):
+        chunk = VISIT_RECORDS[i : i + MAX_RECORDS_PER_FILE]
+
+        # ファイル名を決定
+        if file_index == 0:
+            file_name = "user_data.json"
+        else:
+            file_name = f"user_data_{file_index}.json"
+
+        file_path = data_dir / file_name
+
+        # JSONファイルとして保存
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(
+                {"records": chunk, "count": len(chunk), "file_index": file_index},
+                f,
+                ensure_ascii=False,
+                indent=2,
+            )
+
+        saved_count += len(chunk)
+        file_index += 1
+
+    logger.info(f"サンプルデータを保存: {saved_count}件 -> {data_dir}")
+    return saved_count
+
+
+def load_data_from_files() -> list[dict]:
+    """
+    data/user_data からJSONファイルを読み込む
+
+    Returns:
+        読み込んだレコードのリスト
+    """
+    if not DATA_DIR.exists():
+        logger.warning(f"データディレクトリが存在しません: {DATA_DIR}")
+        return []
+
+    records = []
+
+    # user_data.json, user_data_1.json, ... の順で読み込み
+    main_file = DATA_DIR / "user_data.json"
+    if main_file.exists():
+        try:
+            with open(main_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                records.extend(data.get("records", []))
+        except Exception as e:
+            logger.error(f"ファイル読み込みエラー: {main_file} - {e}")
+
+    # 分割ファイルを読み込み
+    file_index = 1
+    while True:
+        split_file = DATA_DIR / f"user_data_{file_index}.json"
+        if not split_file.exists():
+            break
+
+        try:
+            with open(split_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                records.extend(data.get("records", []))
+        except Exception as e:
+            logger.error(f"ファイル読み込みエラー: {split_file} - {e}")
+
+        file_index += 1
+
+    logger.info(f"データファイルを読み込み: {len(records)}件")
+    return records
+
+
+def get_user_data_summary() -> dict:
+    """
+    data/user_data のサマリ情報を取得する（UI表示用）
+
+    Returns:
+        サマリ情報の辞書
+    """
+    records = load_data_from_files()
+
+    return {
+        "total_count": len(records),
+        "records": records,
+        "file_count": len(list(DATA_DIR.glob("user_data*.json"))) if DATA_DIR.exists() else 0,
+    }
+
+
+def clear_data_files() -> int:
+    """
+    data/user_data 内のすべてのデータファイルを削除する
+
+    Returns:
+        削除したファイル数
+    """
+    if not DATA_DIR.exists():
+        return 0
+
+    deleted_count = 0
+    for file_path in DATA_DIR.glob("user_data*.json"):
+        try:
+            file_path.unlink()
+            deleted_count += 1
+        except Exception as e:
+            logger.error(f"ファイル削除エラー: {file_path} - {e}")
+
+    logger.info(f"データファイルを削除: {deleted_count}件")
+    return deleted_count
+
+
+def convert_records_to_vector_format(records: list[dict]) -> list[dict]:
+    """
+    レコードをベクトルDB登録用の形式に変換する
+
+    Args:
+        records: 訪問履歴レコードのリスト
+
+    Returns:
+        ベクトルDB登録用のデータリスト
+    """
     all_data = []
 
-    for record in VISIT_RECORDS:
+    for record in records:
         # ベクトル検索用のテキストを生成
         text = (
-            f"日時: {record['datetime']} "
-            f"場所: {record['place_name']} "
-            f"住所: {record['address']} "
-            f"感想: {record['impression']}"
+            f"日時: {record.get('datetime', '')} "
+            f"場所: {record.get('place_name', '')} "
+            f"住所: {record.get('address', '')} "
+            f"感想: {record.get('impression', '')}"
         )
 
         all_data.append(
             {
-                "id": record["id"],
+                "id": record.get("id", ""),
                 "text": text,
                 "metadata": {
-                    "datetime": record["datetime"],
-                    "address": record["address"],
-                    "place_name": record["place_name"],
-                    "impression": record["impression"],
+                    "datetime": record.get("datetime", ""),
+                    "address": record.get("address", ""),
+                    "place_name": record.get("place_name", ""),
+                    "impression": record.get("impression", ""),
                     "category": "visit_record",
                 },
             }
         )
 
     return all_data
+
+
+def get_all_sample_data() -> list[dict]:
+    """すべてのサンプルデータを取得（メモリ上のデータから）"""
+    return convert_records_to_vector_format(VISIT_RECORDS)
+
+
+def get_data_from_files() -> list[dict]:
+    """ファイルからデータを読み込んでベクトルDB用形式に変換"""
+    records = load_data_from_files()
+    return convert_records_to_vector_format(records)

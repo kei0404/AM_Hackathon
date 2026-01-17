@@ -32,7 +32,9 @@ class EmbeddingService:
             self.demo_mode = True
         else:
             dashscope.api_key = api_key
-            logger.info(f"Embedding API 初期化完了: モデル={self.model}")
+            # 国際版エンドポイントを設定
+            dashscope.base_http_api_url = settings.DASHSCOPE_BASE_URL
+            logger.info(f"Embedding API 初期化完了: モデル={self.model}, URL={settings.DASHSCOPE_BASE_URL}")
 
     def get_embedding(self, text: str) -> list[float]:
         """

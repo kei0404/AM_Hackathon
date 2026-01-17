@@ -49,40 +49,28 @@
             <h2 class="text-lg font-semibold text-blue-400">INPUT - LLMへ送信するデータ</h2>
         </div>
 
-        <!-- User Personal Data -->
+        <!-- User Visit History Data -->
         <div class="data-panel rounded-xl border border-slate-700 overflow-hidden">
             <div class="px-4 py-3 bg-slate-800/50 border-b border-slate-700 flex items-center justify-between">
                 <div class="flex items-center space-x-2">
                     <span class="w-2 h-2 bg-blue-400 rounded-full"></span>
-                    <span class="font-medium text-sm">user_preferences</span>
+                    <span class="font-medium text-sm">user_data</span>
                 </div>
-                <span class="text-xs text-slate-500 mono">Personal Data</span>
+                <span class="text-xs text-slate-500 mono">{{ user_data.total_count }} records / {{ user_data.file_count }} files</span>
             </div>
-            <div class="p-4 mono text-sm">
-                <pre class="whitespace-pre-wrap"><span class="json-key">{</span>
-  <span class="json-key">"genres"</span>: [{% for genre in user_preferences.genres %}<span class="json-string">"{{ genre }}"</span>{% if not loop.last %}, {% endif %}{% endfor %}],
-  <span class="json-key">"atmosphere"</span>: <span class="json-string">"{{ user_preferences.atmosphere }}"</span>,
-  <span class="json-key">"price_range"</span>: <span class="json-string">"{{ user_preferences.price_range }}"</span>
+            <div class="p-4 mono text-sm max-h-64 overflow-y-auto">
+                <pre id="user-data-json" class="whitespace-pre-wrap"><span class="json-key">{</span>
+  <span class="json-key">"total_count"</span>: <span class="json-number">{{ user_data.total_count }}</span>,
+  <span class="json-key">"records"</span>: <span class="json-key">[</span>{% for record in user_data.records %}
+    <span class="json-key">{</span>
+      <span class="json-key">"id"</span>: <span class="json-string">"{{ record.id }}"</span>,
+      <span class="json-key">"datetime"</span>: <span class="json-string">"{{ record.datetime }}"</span>,
+      <span class="json-key">"place_name"</span>: <span class="json-string">"{{ record.place_name }}"</span>,
+      <span class="json-key">"address"</span>: <span class="json-string">"{{ record.address }}"</span>,
+      <span class="json-key">"impression"</span>: <span class="json-string">"{{ record.impression }}"</span>
+    <span class="json-key">}</span>{% if not loop.last %},{% endif %}{% endfor %}
+  <span class="json-key">]</span>
 <span class="json-key">}</span></pre>
-            </div>
-        </div>
-
-        <!-- Favorite Spots -->
-        <div class="data-panel rounded-xl border border-slate-700 overflow-hidden">
-            <div class="px-4 py-3 bg-slate-800/50 border-b border-slate-700 flex items-center justify-between">
-                <div class="flex items-center space-x-2">
-                    <span class="w-2 h-2 bg-blue-400 rounded-full"></span>
-                    <span class="font-medium text-sm">favorite_spots</span>
-                </div>
-                <span class="text-xs text-slate-500 mono">{{ favorite_spots|length }} items</span>
-            </div>
-            <div class="p-4 mono text-sm max-h-48 overflow-y-auto">
-                <pre class="whitespace-pre-wrap"><span class="json-key">[</span>{% for spot in favorite_spots %}
-  <span class="json-key">{</span>
-    <span class="json-key">"name"</span>: <span class="json-string">"{{ spot.name }}"</span>,
-    <span class="json-key">"category"</span>: <span class="json-string">"{{ spot.category }}"</span>
-  <span class="json-key">}</span>{% if not loop.last %},{% endif %}{% endfor %}
-<span class="json-key">]</span></pre>
             </div>
         </div>
 
@@ -104,22 +92,43 @@
             </div>
         </div>
 
+        <!-- Route Input (現在地・目的地) -->
+        <div class="bg-slate-800 rounded-xl p-4 border border-slate-700 mb-4">
+            <div class="flex items-center space-x-2 mb-3">
+                <svg class="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>
+                </svg>
+                <span class="text-sm font-medium text-slate-300">ルート設定</span>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="text-xs text-slate-500 mb-1 block">現在地</label>
+                    <input type="text"
+                           id="current-location"
+                           class="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-400 focus:outline-none focus:border-emerald-500"
+                           placeholder="例: 東京駅"
+                           value="東京駅">
+                </div>
+                <div>
+                    <label class="text-xs text-slate-500 mb-1 block">目的地</label>
+                    <input type="text"
+                           id="destination"
+                           class="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-400 focus:outline-none focus:border-emerald-500"
+                           placeholder="例: 横浜駅"
+                           value="横浜駅">
+                </div>
+            </div>
+        </div>
+
         <!-- Chat Input UI -->
         <div class="bg-slate-800 rounded-xl p-4 border border-slate-700">
-            <form id="chat-form" class="flex items-center space-x-3">
+            <form id="chat-form">
                 <input type="text"
                        id="message-input"
                        name="message"
-                       class="flex-1 bg-slate-700 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
-                       placeholder="AIに相談する..."
+                       class="w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
+                       placeholder="立ち寄りたい場所の希望を入力してEnterで送信..."
                        autocomplete="off">
-                <button type="submit"
-                        id="send-button"
-                        class="p-3 bg-blue-500 hover:bg-blue-600 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
-                    </svg>
-                </button>
             </form>
 
             <!-- Start / Stop Buttons -->
@@ -261,7 +270,6 @@
     // DOM elements
     const chatForm = document.getElementById('chat-form');
     const messageInput = document.getElementById('message-input');
-    const sendButton = document.getElementById('send-button');
     const chatContainer = document.getElementById('chat-container');
     const apiLog = document.getElementById('api-log');
     const inputMessageDisplay = document.getElementById('input-message-display');
@@ -274,6 +282,8 @@
     const quickReplies = document.querySelectorAll('.quick-reply');
     const startButton = document.getElementById('start-button');
     const stopButton = document.getElementById('stop-button');
+    const currentLocationInput = document.getElementById('current-location');
+    const destinationInput = document.getElementById('destination');
 
     // Session state
     let isSessionActive = true;
@@ -331,7 +341,6 @@
             isSessionActive = false;
             document.getElementById('session-status').textContent = '"terminated"';
             messageInput.disabled = true;
-            sendButton.disabled = true;
             messageInput.placeholder = 'セッションが終了しました';
 
             // Log API call
@@ -377,8 +386,7 @@
         const message = messageInput.value.trim();
         if (!message) return;
 
-        // Disable input
-        sendButton.disabled = true;
+        // Disable input during processing
         messageInput.disabled = true;
 
         // Update input display
@@ -395,6 +403,9 @@
         const startTime = Date.now();
 
         try {
+            const currentLocation = currentLocationInput.value.trim();
+            const destination = destinationInput.value.trim();
+
             const response = await fetch('/api/v1/chat/message', {
                 method: 'POST',
                 headers: {
@@ -403,6 +414,8 @@
                 body: JSON.stringify({
                     message: message,
                     session_id: sessionId,
+                    current_location: currentLocation || null,
+                    destination: destination || null,
                 }),
             });
 
@@ -452,7 +465,6 @@
             logApiCall('POST', '/api/v1/chat/message', 'Error', 0);
         } finally {
             // Re-enable input
-            sendButton.disabled = false;
             messageInput.disabled = false;
             messageInput.value = '';
             messageInput.focus();

@@ -30,6 +30,8 @@ class ChatRequest(BaseModel):
 
     message: str = Field(..., description="ユーザーからのメッセージ")
     session_id: Optional[str] = Field(None, description="セッションID")
+    current_location: Optional[str] = Field(None, description="現在地（例: 東京駅）")
+    destination: Optional[str] = Field(None, description="目的地（例: 横浜駅）")
     context: Optional[dict] = Field(None, description="追加コンテキスト（お気に入り、履歴など）")
 
 
@@ -52,3 +54,5 @@ class ConversationContext(BaseModel):
     user_preferences: Optional[dict] = None
     favorite_spots: list[dict] = Field(default_factory=list)
     visit_history: list[dict] = Field(default_factory=list)
+    current_location: Optional[str] = None
+    destination: Optional[str] = None

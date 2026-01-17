@@ -12,6 +12,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from ..services.conversation_service import conversation_service
+from ..services.sample_data import get_user_data_summary
 
 router = APIRouter(tags=["web"])
 
@@ -20,39 +21,24 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 
-# サンプルデータ（デモ用）
-SAMPLE_USER_PREFERENCES = {
-    "genres": ["カフェ", "レストラン", "自然"],
-    "atmosphere": "静か",
-    "price_range": "中",
-}
-
-SAMPLE_FAVORITE_SPOTS = [
-    {"name": "Blue Bottle Coffee 清澄白河", "category": "カフェ"},
-    {"name": "代々木公園", "category": "公園"},
-    {"name": "東京国立博物館", "category": "美術館"},
-]
-
-
 @router.get("/", response_class=HTMLResponse)
 async def index(request: Request) -> HTMLResponse:
     """
     トップページ（データフロー可視化ダッシュボード）
     """
     # 新しいセッションを作成
-    session_id = conversation_service.create_session(
-        user_preferences=SAMPLE_USER_PREFERENCES,
-        favorite_spots=SAMPLE_FAVORITE_SPOTS,
-    )
+    session_id = conversation_service.create_session()
 
     # ウェルカムメッセージを取得
     welcome = conversation_service.get_welcome_message(session_id)
 
+    # data/user_data のデータを取得
+    user_data = get_user_data_summary()
+
     context = {
         "request": request,
         "session_id": session_id,
-        "user_preferences": SAMPLE_USER_PREFERENCES,
-        "favorite_spots": SAMPLE_FAVORITE_SPOTS,
+        "user_data": user_data,
         "welcome_message": welcome.message,
         "suggestions": welcome.suggestions,
         "turn_count": welcome.turn_count,
@@ -74,10 +60,7 @@ async def chat_page(request: Request, session_id: str) -> HTMLResponse:
 
     if not session:
         # セッションが存在しない場合は新規作成
-        session_id = conversation_service.create_session(
-            user_preferences=SAMPLE_USER_PREFERENCES,
-            favorite_spots=SAMPLE_FAVORITE_SPOTS,
-        )
+        session_id = conversation_service.create_session()
         session = conversation_service.get_session(session_id)
 
     # 会話履歴をフォーマット
@@ -91,11 +74,13 @@ async def chat_page(request: Request, session_id: str) -> HTMLResponse:
             }
         )
 
+    # data/user_data のデータを取得
+    user_data = get_user_data_summary()
+
     context = {
         "request": request,
         "session_id": session_id,
-        "user_preferences": session.user_preferences or SAMPLE_USER_PREFERENCES,
-        "favorite_spots": session.favorite_spots or SAMPLE_FAVORITE_SPOTS,
+        "user_data": user_data,
         "turn_count": session.turn_count,
         "max_turns": 3,
         "is_complete": session.turn_count >= 3,
