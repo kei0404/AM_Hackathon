@@ -2,6 +2,7 @@
 チャットAPIエンドポイント
 """
 
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
@@ -9,6 +10,10 @@ from pydantic import BaseModel
 
 from ..models.chat import ChatRequest, ChatResponse
 from ..services.conversation_service import conversation_service
+from ..services.sample_data import get_all_sample_data
+from ..services.vector_store import vector_store
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -35,7 +40,24 @@ async def start_conversation(request: WelcomeRequest) -> ChatResponse:
 
     - セッションIDが指定されていない場合は新規作成
     - ユーザーの嗜好やお気に入りを渡すことで、よりパーソナライズされた応答が可能
+    - サンプルデータをベクトルDBに格納する
     """
+    # ベクトルDBにサンプルデータを格納
+    try:
+        sample_data = get_all_sample_data()
+        doc_ids = [d["id"] for d in sample_data]
+        texts = [d["text"] for d in sample_data]
+        metadatas = [d["metadata"] for d in sample_data]
+
+        vector_store.add_documents(
+            doc_ids=doc_ids,
+            texts=texts,
+            metadatas=metadatas,
+        )
+        logger.info(f"ベクトルDBにサンプルデータを格納: {len(sample_data)}件")
+    except Exception as e:
+        logger.error(f"サンプルデータの格納に失敗: {e}")
+
     # ユーザー情報がある場合はセッションを作成
     if request.user_preferences or request.favorite_spots:
         session_id = conversation_service.create_session(
@@ -87,14 +109,23 @@ async def end_session(session_id: str) -> SessionResponse:
     セッションを終了してデータを消去する
 
     - プライバシー・バイ・デザイン原則に基づき、セッションデータを完全に削除
+    - ベクトルDBのデータも削除
     """
+    # 会話キャッシュを削除
     success = conversation_service.delete_session(session_id)
     if not success:
         raise HTTPException(status_code=404, detail="セッションが見つかりません")
 
+    # ベクトルDBのデータをクリア
+    try:
+        vector_store.clear_collection()
+        logger.info(f"ベクトルDBのデータをクリア: session_id={session_id}")
+    except Exception as e:
+        logger.error(f"ベクトルDBのクリアに失敗: {e}")
+
     return SessionResponse(
         session_id=session_id,
-        message="セッションを終了し、データを消去しました",
+        message="セッションを終了し、ベクトルDBと会話キャッシュを消去しました",
     )
 
 

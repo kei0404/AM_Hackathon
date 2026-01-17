@@ -1,118 +1,79 @@
 """
 サンプルデータ - ベクトルDB初期化用
+訪問履歴データ形式: 日時、住所、場所の名前、感想
 """
 
-# お気に入りスポットのサンプルデータ
-FAVORITE_SPOTS = [
-    {
-        "id": "spot_001",
-        "name": "Blue Bottle Coffee 清澄白河",
-        "description": "静かで落ち着いた雰囲気のカフェ。コーヒーの品質が高く、ゆっくり作業できる。",
-        "category": "favorite_spot",
-        "tags": ["カフェ", "コーヒー", "静か", "作業向け"],
-        "location": {"lat": 35.6812, "lng": 139.7996},
-        "rating": 4.5,
-    },
-    {
-        "id": "spot_002",
-        "name": "代々木公園",
-        "description": "都心にある広大な公園。自然を楽しめる。散歩やピクニックに最適。",
-        "category": "favorite_spot",
-        "tags": ["公園", "自然", "散歩", "リラックス"],
-        "location": {"lat": 35.6716, "lng": 139.6949},
-        "rating": 4.3,
-    },
-    {
-        "id": "spot_003",
-        "name": "森美術館",
-        "description": "六本木ヒルズにある現代アート美術館。展望台も併設。",
-        "category": "favorite_spot",
-        "tags": ["美術館", "アート", "展望台", "六本木"],
-        "location": {"lat": 35.6604, "lng": 139.7292},
-        "rating": 4.4,
-    },
-    {
-        "id": "spot_004",
-        "name": "築地場外市場",
-        "description": "新鮮な海鮮や食材が楽しめる市場。朝食や食べ歩きに人気。",
-        "category": "favorite_spot",
-        "tags": ["市場", "海鮮", "グルメ", "朝食"],
-        "location": {"lat": 35.6654, "lng": 139.7707},
-        "rating": 4.2,
-    },
-    {
-        "id": "spot_005",
-        "name": "井の頭恩賜公園",
-        "description": "吉祥寺にある人気の公園。池でボートも楽しめる。",
-        "category": "favorite_spot",
-        "tags": ["公園", "自然", "ボート", "吉祥寺"],
-        "location": {"lat": 35.7003, "lng": 139.5746},
-        "rating": 4.4,
-    },
-]
-
-# ユーザー嗜好のサンプルデータ
-USER_PREFERENCES = [
-    {
-        "id": "pref_001",
-        "description": "静かな場所が好き。騒がしいところは苦手。",
-        "category": "preference",
-        "type": "atmosphere",
-    },
-    {
-        "id": "pref_002",
-        "description": "コーヒーが好き。特に浅煎りのスペシャルティコーヒーを好む。",
-        "category": "preference",
-        "type": "food",
-    },
-    {
-        "id": "pref_003",
-        "description": "自然の中でリラックスするのが好き。緑が多い場所を好む。",
-        "category": "preference",
-        "type": "environment",
-    },
-    {
-        "id": "pref_004",
-        "description": "アートや文化的な体験を楽しむのが好き。",
-        "category": "preference",
-        "type": "interest",
-    },
-    {
-        "id": "pref_005",
-        "description": "混雑を避けたい。平日や早朝を好む。",
-        "category": "preference",
-        "type": "timing",
-    },
-]
-
 # 訪問履歴のサンプルデータ
-VISIT_HISTORY = [
+VISIT_RECORDS = [
     {
-        "id": "history_001",
-        "description": "先週Blue Bottle Coffeeで2時間作業した。とても集中できた。",
-        "category": "history",
-        "spot_id": "spot_001",
-        "date": "2026-01-10",
-        "duration_minutes": 120,
-        "satisfaction": 5,
+        "id": "visit_001",
+        "datetime": "2026-01-15 12:30",
+        "address": "東京都江東区白河1-4-8",
+        "place_name": "Blue Bottle Coffee 清澄白河",
+        "impression": "静かで落ち着いた雰囲気。コーヒーの品質が高く、2時間ほど作業に集中できた。また来たい。",
     },
     {
-        "id": "history_002",
-        "description": "先月代々木公園でピクニックをした。天気が良くて気持ちよかった。",
-        "category": "history",
-        "spot_id": "spot_002",
-        "date": "2025-12-15",
-        "duration_minutes": 180,
-        "satisfaction": 4,
+        "id": "visit_002",
+        "datetime": "2026-01-12 10:00",
+        "address": "東京都渋谷区代々木神園町2-1",
+        "place_name": "代々木公園",
+        "impression": "天気が良くてピクニックに最適だった。緑が多くてリフレッシュできた。週末の散歩コースにしたい。",
     },
     {
-        "id": "history_003",
-        "description": "森美術館で現代アート展を鑑賞。刺激的な展示だった。",
-        "category": "history",
-        "spot_id": "spot_003",
-        "date": "2025-11-20",
-        "duration_minutes": 150,
-        "satisfaction": 5,
+        "id": "visit_003",
+        "datetime": "2026-01-08 14:00",
+        "address": "東京都港区六本木6-10-1",
+        "place_name": "森美術館",
+        "impression": "現代アート展がとても刺激的だった。展望台からの夜景も素晴らしい。デートにもおすすめ。",
+    },
+    {
+        "id": "visit_004",
+        "datetime": "2026-01-05 07:30",
+        "address": "東京都中央区築地4-16-2",
+        "place_name": "築地場外市場",
+        "impression": "朝早く行ったので混雑を避けられた。新鮮な海鮮丼が美味しかった。外国人観光客も多かった。",
+    },
+    {
+        "id": "visit_005",
+        "datetime": "2025-12-28 11:00",
+        "address": "東京都武蔵野市御殿山1-18-31",
+        "place_name": "井の頭恩賜公園",
+        "impression": "ボートに乗って楽しんだ。紅葉の時期は過ぎていたが、冬の景色も風情があった。",
+    },
+    {
+        "id": "visit_006",
+        "datetime": "2025-12-20 19:00",
+        "address": "東京都新宿区新宿3-38-1",
+        "place_name": "ルミネエスト新宿",
+        "impression": "クリスマス前で混雑していたが、イルミネーションが綺麗だった。買い物も楽しめた。",
+    },
+    {
+        "id": "visit_007",
+        "datetime": "2025-12-15 13:00",
+        "address": "東京都台東区上野公園7-7",
+        "place_name": "国立科学博物館",
+        "impression": "恐竜の展示が迫力満点。子供連れにも良さそう。丸一日かけてゆっくり見たい。",
+    },
+    {
+        "id": "visit_008",
+        "datetime": "2025-12-10 18:30",
+        "address": "東京都渋谷区恵比寿4-20-3",
+        "place_name": "恵比寿ガーデンプレイス",
+        "impression": "バカラのシャンデリアが美しかった。冬のイルミネーションスポットとして最高。",
+    },
+    {
+        "id": "visit_009",
+        "datetime": "2025-12-05 15:00",
+        "address": "神奈川県横浜市中区山下町279",
+        "place_name": "横浜中華街",
+        "impression": "食べ歩きが楽しかった。小籠包と肉まんが特に美味しかった。お土産も買えた。",
+    },
+    {
+        "id": "visit_010",
+        "datetime": "2025-11-30 09:00",
+        "address": "神奈川県鎌倉市長谷4-2-28",
+        "place_name": "鎌倉大仏",
+        "impression": "朝早く行ったので空いていた。大仏の中にも入れて貴重な体験だった。周辺の寺社も散策した。",
     },
 ]
 
@@ -121,40 +82,25 @@ def get_all_sample_data() -> list[dict]:
     """すべてのサンプルデータを取得"""
     all_data = []
 
-    for spot in FAVORITE_SPOTS:
-        all_data.append(
-            {
-                "id": spot["id"],
-                "text": f"{spot['name']}: {spot['description']} タグ: {', '.join(spot['tags'])}",
-                "metadata": {
-                    "category": spot["category"],
-                    "name": spot["name"],
-                    "rating": spot["rating"],
-                },
-            }
+    for record in VISIT_RECORDS:
+        # ベクトル検索用のテキストを生成
+        text = (
+            f"日時: {record['datetime']} "
+            f"場所: {record['place_name']} "
+            f"住所: {record['address']} "
+            f"感想: {record['impression']}"
         )
 
-    for pref in USER_PREFERENCES:
         all_data.append(
             {
-                "id": pref["id"],
-                "text": pref["description"],
+                "id": record["id"],
+                "text": text,
                 "metadata": {
-                    "category": pref["category"],
-                    "type": pref["type"],
-                },
-            }
-        )
-
-    for history in VISIT_HISTORY:
-        all_data.append(
-            {
-                "id": history["id"],
-                "text": history["description"],
-                "metadata": {
-                    "category": history["category"],
-                    "spot_id": history["spot_id"],
-                    "satisfaction": history["satisfaction"],
+                    "datetime": record["datetime"],
+                    "address": record["address"],
+                    "place_name": record["place_name"],
+                    "impression": record["impression"],
+                    "category": "visit_record",
                 },
             }
         )
