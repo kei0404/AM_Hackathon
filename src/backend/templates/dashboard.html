@@ -121,6 +121,27 @@
                     </svg>
                 </button>
             </form>
+
+            <!-- Start / Stop Buttons -->
+            <div class="flex items-center justify-center space-x-4 mt-4 pt-4 border-t border-slate-700">
+                <button id="start-button"
+                        class="flex items-center space-x-2 px-6 py-2 bg-emerald-500 hover:bg-emerald-600 rounded-lg transition-colors text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                    <span>Start</span>
+                </button>
+                <button id="stop-button"
+                        class="flex items-center space-x-2 px-6 py-2 bg-red-500 hover:bg-red-600 rounded-lg transition-colors text-white font-medium disabled:opacity-50 disabled:cursor-not-allowed">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z"/>
+                    </svg>
+                    <span>Stop</span>
+                </button>
+            </div>
+
             <div id="quick-replies" class="flex flex-wrap gap-2 mt-3">
                 <span class="text-xs text-slate-500">Quick:</span>
                 {% for suggestion in suggestions %}
@@ -251,6 +272,89 @@
     const progressIndicator = document.getElementById('progress-indicator');
     const sessionTurn = document.getElementById('session-turn');
     const quickReplies = document.querySelectorAll('.quick-reply');
+    const startButton = document.getElementById('start-button');
+    const stopButton = document.getElementById('stop-button');
+
+    // Session state
+    let isSessionActive = true;
+
+    // Start button - Create new session
+    startButton.addEventListener('click', async () => {
+        startButton.disabled = true;
+
+        try {
+            const response = await fetch('/api/v1/chat/start', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({}),
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            const data = await response.json();
+
+            // Reload page with new session
+            window.location.href = '/';
+
+        } catch (error) {
+            console.error('Error starting session:', error);
+            alert('セッションの開始に失敗しました');
+        } finally {
+            startButton.disabled = false;
+        }
+    });
+
+    // Stop button - End current session
+    stopButton.addEventListener('click', async () => {
+        if (!confirm('セッションを終了しますか？会話履歴は削除されます。')) {
+            return;
+        }
+
+        stopButton.disabled = true;
+
+        try {
+            const response = await fetch(`/api/v1/chat/session/${sessionId}`, {
+                method: 'DELETE',
+            });
+
+            const endTime = Date.now();
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            // Update UI
+            isSessionActive = false;
+            document.getElementById('session-status').textContent = '"terminated"';
+            messageInput.disabled = true;
+            sendButton.disabled = true;
+            messageInput.placeholder = 'セッションが終了しました';
+
+            // Log API call
+            logApiCall('DELETE', `/api/v1/chat/session/${sessionId}`, response.status, 0);
+
+            // Add system message
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'flex items-center justify-center py-4';
+            messageDiv.innerHTML = `
+                <div class="px-4 py-2 bg-red-500/20 border border-red-500/50 rounded-lg">
+                    <p class="text-sm text-red-400">セッションが終了しました。Startボタンで新しいセッションを開始できます。</p>
+                </div>
+            `;
+            chatContainer.appendChild(messageDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+
+        } catch (error) {
+            console.error('Error stopping session:', error);
+            alert('セッションの終了に失敗しました');
+        } finally {
+            stopButton.disabled = false;
+        }
+    });
 
     // Update input display when typing
     messageInput.addEventListener('input', (e) => {

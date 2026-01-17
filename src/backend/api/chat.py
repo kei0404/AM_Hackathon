@@ -96,3 +96,58 @@ async def end_session(session_id: str) -> SessionResponse:
         session_id=session_id,
         message="セッションを終了し、データを消去しました",
     )
+
+
+@router.get("/session/{session_id}/ttl", response_model=dict)
+async def get_session_ttl(session_id: str) -> dict:
+    """
+    セッションの残りTTL（秒）を取得する
+    """
+    ttl = conversation_service.get_session_ttl(session_id)
+    if ttl is None:
+        raise HTTPException(status_code=404, detail="セッションが見つかりません")
+
+    return {
+        "session_id": session_id,
+        "ttl_seconds": ttl,
+        "message": f"残り有効期限: {ttl}秒",
+    }
+
+
+@router.post("/session/{session_id}/extend", response_model=dict)
+async def extend_session_ttl(session_id: str) -> dict:
+    """
+    セッションのTTLを延長する
+    """
+    success = conversation_service.extend_session(session_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="セッションが見つかりません")
+
+    ttl = conversation_service.get_session_ttl(session_id)
+    return {
+        "session_id": session_id,
+        "ttl_seconds": ttl,
+        "message": "セッションのTTLを延長しました",
+    }
+
+
+@router.get("/cache/stats", response_model=dict)
+async def get_cache_stats() -> dict:
+    """
+    セッションキャッシュの統計情報を取得する
+    """
+    return conversation_service.get_cache_stats()
+
+
+@router.post("/cache/cleanup", response_model=dict)
+async def cleanup_expired_sessions() -> dict:
+    """
+    期限切れセッションを手動でクリーンアップする
+    """
+    cleaned = conversation_service.cleanup_expired_sessions()
+    stats = conversation_service.get_cache_stats()
+    return {
+        "cleaned_sessions": cleaned,
+        "message": f"{cleaned}件の期限切れセッションを削除しました",
+        "current_stats": stats,
+    }

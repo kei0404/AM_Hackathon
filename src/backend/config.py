@@ -36,6 +36,13 @@ class Settings:
     MAX_TOKENS: int = 1024
     TEMPERATURE: float = 0.7
 
+    # セッションキャッシュ設定（TTL）
+    SESSION_TTL_SECONDS: int = int(os.getenv("SESSION_TTL_SECONDS", "1800"))  # 30分
+    SESSION_CLEANUP_INTERVAL: int = int(
+        os.getenv("SESSION_CLEANUP_INTERVAL", "300")
+    )  # 5分
+    MAX_SESSIONS: int = int(os.getenv("MAX_SESSIONS", "1000"))  # 最大セッション数
+
     @classmethod
     def validate(cls) -> None:
         """設定の検証"""
