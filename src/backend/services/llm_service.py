@@ -164,6 +164,7 @@ class LLMService:
         destination: Optional[str] = None,
         rag_results: Optional[list[dict]] = None,
         user_preferences: Optional[dict] = None,
+        additional_preferences: Optional[str] = None,
     ) -> dict:
         """
         立ち寄り場所の提案を生成する（RAG検索結果を使用）
@@ -175,6 +176,7 @@ class LLMService:
             destination: 目的地
             rag_results: RAG検索結果（訪問履歴など）
             user_preferences: ユーザーの嗜好設定
+            additional_preferences: 追加の希望（やりたいこと等）
 
         Returns:
             LLMの応答と選択肢を含む辞書
@@ -185,6 +187,7 @@ class LLMService:
             destination=destination,
             rag_results=rag_results,
             user_preferences=user_preferences,
+            additional_preferences=additional_preferences,
         )
 
         messages = [
@@ -208,19 +211,25 @@ class LLMService:
         destination: Optional[str] = None,
         rag_results: Optional[list[dict]] = None,
         user_preferences: Optional[dict] = None,
+        additional_preferences: Optional[str] = None,
     ) -> str:
         """立ち寄り場所提案用のシステムプロンプトを構築する"""
         remaining_turns = settings.MAX_CONVERSATION_TURNS - turn_count
 
         prompt = f"""あなたは「Data Plug Copilot」のAIアシスタントです。
-ユーザーが車で移動中に立ち寄りたい場所を提案します。
+ユーザーが車で移動中に、目的地以外に立ち寄りたい場所を提案します。
 
 【ルート情報】
 - 現在地: {current_location or "未設定"}
 - 目的地: {destination or "未設定"}
 
+【ユーザーの追加の希望】
+{additional_preferences or "特になし"}
+
 【重要なルール】
-- ユーザーの過去の訪問履歴や感想を参考に、ルート上で立ち寄れる場所を提案してください
+- ユーザーの過去の訪問履歴や感想を参考に、目的地への途中で立ち寄れる新しい場所を提案してください
+- 目的地そのものではなく、ルート上の「寄り道スポット」を提案してください
+- ユーザーの追加の希望（やりたいこと）を考慮して提案してください
 - 残り{remaining_turns}回の会話で立ち寄り場所を1つに絞り込んでください
 - 選択肢は必ず3つ以内で提示してください
 - 回答は簡潔に、運転中でも理解しやすいようにしてください

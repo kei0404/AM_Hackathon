@@ -17,6 +17,16 @@ class MessageRole(str, Enum):
     ASSISTANT = "assistant"
 
 
+class ConversationPhase(str, Enum):
+    """会話フェーズ"""
+
+    WAITING_LOCATION = "waiting_location"  # 現在地待ち
+    ASKING_DESTINATION = "asking_destination"  # 目的地を質問中
+    ASKING_PREFERENCES = "asking_preferences"  # 追加の希望を質問中
+    SUGGESTING_STOPOVER = "suggesting_stopover"  # 立ち寄り先を提案中
+    COMPLETE = "complete"  # 会話完了
+
+
 class ChatMessage(BaseModel):
     """チャットメッセージ"""
 
@@ -51,8 +61,10 @@ class ConversationContext(BaseModel):
     session_id: str
     messages: list[ChatMessage] = Field(default_factory=list)
     turn_count: int = 0
+    phase: ConversationPhase = ConversationPhase.WAITING_LOCATION
     user_preferences: Optional[dict] = None
     favorite_spots: list[dict] = Field(default_factory=list)
     visit_history: list[dict] = Field(default_factory=list)
     current_location: Optional[str] = None
     destination: Optional[str] = None
+    additional_preferences: Optional[str] = None  # 追加の希望（やりたいこと等）

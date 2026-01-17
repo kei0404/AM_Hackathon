@@ -14,6 +14,7 @@ from ..models.chat import (
     ChatRequest,
     ChatResponse,
     ConversationContext,
+    ConversationPhase,
     MessageRole,
 )
 from .llm_service import llm_service
@@ -313,6 +314,12 @@ class ConversationService:
         """
         ユーザーメッセージを処理してレスポンスを生成する
 
+        会話フロー:
+        1. WAITING_LOCATION: 現在地を受け取り → 「どこに行きたいですか？」
+        2. ASKING_DESTINATION: 目的地を受け取り → 「他に行きたいところ、やってみたいことはありますか？」
+        3. ASKING_PREFERENCES: 追加希望を受け取り → RAG検索 → 立ち寄り先を提案
+        4. SUGGESTING_STOPOVER: 提案に対する反応を処理
+
         Args:
             request: チャットリクエスト
 
@@ -333,12 +340,6 @@ class ConversationService:
 
         context = self._cache.get(session_id)
 
-        # 現在地・目的地を更新（リクエストに含まれている場合）
-        if request.current_location:
-            context.current_location = request.current_location
-        if request.destination:
-            context.destination = request.destination
-
         # ユーザーメッセージを履歴に追加
         user_message = ChatMessage(
             role=MessageRole.USER,
@@ -347,39 +348,91 @@ class ConversationService:
         )
         context.messages.append(user_message)
 
-        # RAG検索: ユーザーメッセージに関連する訪問履歴を検索
-        rag_results = self._search_relevant_places(request.message, n_results=5)
+        # フェーズに応じた処理
+        response_message = ""
+        suggestions = []
+        is_complete = False
 
-        # LLMで応答を生成（RAG結果をコンテキストとして渡す）
-        llm_result = llm_service.generate_stopover_suggestion(
-            user_message=request.message,
-            turn_count=context.turn_count,
-            current_location=context.current_location,
-            destination=context.destination,
-            rag_results=rag_results,
-            user_preferences=context.user_preferences,
-        )
+        if context.phase == ConversationPhase.WAITING_LOCATION:
+            # 現在地を受け取り、目的地を質問
+            context.current_location = request.message
+            context.phase = ConversationPhase.ASKING_DESTINATION
+            response_message = "どこに行きたいですか？"
+            suggestions = []
+            logger.info(f"現在地を受信: {context.current_location}")
+
+        elif context.phase == ConversationPhase.ASKING_DESTINATION:
+            # 目的地を受け取り、追加の希望を質問
+            context.destination = request.message
+            context.phase = ConversationPhase.ASKING_PREFERENCES
+            response_message = "他に行きたいところ、やってみたいことはありますか？"
+            suggestions = ["カフェで休憩したい", "美味しいものが食べたい", "特にない"]
+            logger.info(f"目的地を受信: {context.destination}")
+
+        elif context.phase == ConversationPhase.ASKING_PREFERENCES:
+            # 追加希望を受け取り、RAG検索して提案
+            context.additional_preferences = request.message
+            context.phase = ConversationPhase.SUGGESTING_STOPOVER
+
+            # RAG検索: 目的地と追加希望を組み合わせて検索
+            search_query = f"{context.destination} {request.message}"
+            rag_results = self._search_relevant_places(search_query, n_results=5)
+            logger.info(f"RAG検索実行: query='{search_query}', 結果={len(rag_results)}件")
+
+            # LLMで立ち寄り先を提案
+            llm_result = llm_service.generate_stopover_suggestion(
+                user_message=request.message,
+                turn_count=context.turn_count,
+                current_location=context.current_location,
+                destination=context.destination,
+                rag_results=rag_results,
+                user_preferences=context.user_preferences,
+                additional_preferences=context.additional_preferences,
+            )
+            response_message = llm_result["message"]
+            suggestions = llm_result["suggestions"]
+            context.turn_count = llm_result["turn_count"]
+
+        elif context.phase == ConversationPhase.SUGGESTING_STOPOVER:
+            # 提案に対するユーザーの反応を処理
+            # RAG検索で追加提案
+            search_query = f"{context.destination} {context.additional_preferences} {request.message}"
+            rag_results = self._search_relevant_places(search_query, n_results=5)
+
+            llm_result = llm_service.generate_stopover_suggestion(
+                user_message=request.message,
+                turn_count=context.turn_count,
+                current_location=context.current_location,
+                destination=context.destination,
+                rag_results=rag_results,
+                user_preferences=context.user_preferences,
+                additional_preferences=context.additional_preferences,
+            )
+            response_message = llm_result["message"]
+            suggestions = llm_result["suggestions"]
+            is_complete = llm_result["is_complete"]
+            context.turn_count = llm_result["turn_count"]
+
+            if is_complete:
+                context.phase = ConversationPhase.COMPLETE
 
         # AIメッセージを履歴に追加
         ai_message = ChatMessage(
             role=MessageRole.ASSISTANT,
-            content=llm_result["message"],
+            content=response_message,
             timestamp=datetime.now(),
         )
         context.messages.append(ai_message)
-
-        # ターンカウントを更新
-        context.turn_count = llm_result["turn_count"]
 
         # セッションを更新（TTLも延長される）
         self._cache.set(session_id, context)
 
         return ChatResponse(
-            message=llm_result["message"],
+            message=response_message,
             session_id=session_id,
-            turn_count=llm_result["turn_count"],
-            is_complete=llm_result["is_complete"],
-            suggestions=llm_result["suggestions"],
+            turn_count=context.turn_count,
+            is_complete=is_complete,
+            suggestions=suggestions,
         )
 
     def get_welcome_message(self, session_id: Optional[str] = None) -> ChatResponse:
@@ -397,11 +450,14 @@ class ConversationService:
 
         welcome_message = (
             "こんにちは！Data Plug Copilotです。\n"
-            "目的地までのルートで、立ち寄りたい場所はありますか？\n"
-            "あなたの訪問履歴を参考に、おすすめの場所をご提案します。"
+            "あなたの訪問履歴を参考に、おすすめの立ち寄りスポットをご提案します。\n\n"
+            "まず、現在地を教えてください。"
         )
 
         context = self._cache.get(session_id)
+        # フェーズを初期状態に設定
+        context.phase = ConversationPhase.WAITING_LOCATION
+
         ai_message = ChatMessage(
             role=MessageRole.ASSISTANT,
             content=welcome_message,
@@ -417,7 +473,7 @@ class ConversationService:
             session_id=session_id,
             turn_count=0,
             is_complete=False,
-            suggestions=["カフェで休憩したい", "美味しいものが食べたい", "景色の良い場所に寄りたい"],
+            suggestions=[],
         )
 
 

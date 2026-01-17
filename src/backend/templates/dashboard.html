@@ -31,7 +31,7 @@
             </div>
             <div class="ml-4 px-3 py-1 bg-slate-700 rounded-lg text-sm">
                 <span class="text-slate-400">Session:</span>
-                <span class="text-blue-400 mono ml-1">{{ session_id[:8] }}...</span>
+                <span id="session-id-display" class="text-blue-400 mono ml-1">{% if session_id %}{{ session_id[:8] }}...{% else %}未開始{% endif %}</span>
             </div>
         </div>
     </div>
@@ -56,10 +56,10 @@
                     <span class="w-2 h-2 bg-blue-400 rounded-full"></span>
                     <span class="font-medium text-sm">user_data</span>
                 </div>
-                <span class="text-xs text-slate-500 mono">{{ user_data.total_count }} records / {{ user_data.file_count }} files</span>
+                <span id="user-data-count" class="text-xs text-slate-500 mono">{% if session_started %}{{ user_data.total_count }} records{% else %}-- records{% endif %}</span>
             </div>
             <div class="p-4 mono text-sm max-h-64 overflow-y-auto">
-                <pre id="user-data-json" class="whitespace-pre-wrap"><span class="json-key">{</span>
+                <pre id="user-data-json" class="whitespace-pre-wrap">{% if session_started %}<span class="json-key">{</span>
   <span class="json-key">"total_count"</span>: <span class="json-number">{{ user_data.total_count }}</span>,
   <span class="json-key">"records"</span>: <span class="json-key">[</span>{% for record in user_data.records %}
     <span class="json-key">{</span>
@@ -70,52 +70,55 @@
       <span class="json-key">"impression"</span>: <span class="json-string">"{{ record.impression }}"</span>
     <span class="json-key">}</span>{% if not loop.last %},{% endif %}{% endfor %}
   <span class="json-key">]</span>
-<span class="json-key">}</span></pre>
+<span class="json-key">}</span>{% else %}<span class="text-slate-500">// セッション開始後にデータが表示されます</span>{% endif %}</pre>
             </div>
         </div>
 
         <!-- User Message Input -->
-        <div id="input-panel" class="data-panel rounded-xl border-2 border-blue-500/50 animate-pulse-border overflow-hidden">
+        <div id="input-panel" class="data-panel rounded-xl border-2 border-blue-500/50 overflow-hidden {% if not session_started %}opacity-50{% endif %}">
             <div class="px-4 py-3 bg-blue-500/10 border-b border-slate-700 flex items-center justify-between">
                 <div class="flex items-center space-x-2">
-                    <span class="w-2 h-2 bg-blue-400 rounded-full animate-pulse"></span>
+                    <span id="input-status-dot" class="w-2 h-2 bg-blue-400 rounded-full {% if session_started %}animate-pulse{% endif %}"></span>
                     <span class="font-medium text-sm text-blue-300">user_message</span>
                 </div>
-                <span class="text-xs text-blue-400 mono">Current Input</span>
+                <span class="text-xs text-blue-400 mono">{% if session_started %}Current Input{% else %}待機中{% endif %}</span>
             </div>
             <div id="input-json" class="p-4 mono text-sm">
-                <pre class="whitespace-pre-wrap"><span class="json-key">{</span>
+                <pre id="input-json-content" class="whitespace-pre-wrap">{% if session_started %}<span class="json-key">{</span>
   <span class="json-key">"message"</span>: <span class="json-string" id="input-message-display">""</span>,
   <span class="json-key">"session_id"</span>: <span class="json-string">"{{ session_id }}"</span>,
   <span class="json-key">"turn_count"</span>: <span class="json-number" id="input-turn-display">{{ turn_count }}</span>
-<span class="json-key">}</span></pre>
+<span class="json-key">}</span>{% else %}<span class="text-slate-500">// セッション開始後に入力データが表示されます</span>{% endif %}</pre>
             </div>
         </div>
 
         <!-- Route Input (現在地・目的地) -->
-        <div class="bg-slate-800 rounded-xl p-4 border border-slate-700 mb-4">
+        <div id="route-panel" class="bg-slate-800 rounded-xl p-4 border border-slate-700 mb-4 {% if not session_started %}opacity-50{% endif %}">
             <div class="flex items-center space-x-2 mb-3">
                 <svg class="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>
                 </svg>
                 <span class="text-sm font-medium text-slate-300">ルート設定</span>
+                <span id="route-status" class="text-xs text-slate-500 ml-2">{% if not session_started %}(セッション開始後に入力可能){% endif %}</span>
             </div>
             <div class="grid grid-cols-2 gap-3">
                 <div>
                     <label class="text-xs text-slate-500 mb-1 block">現在地</label>
                     <input type="text"
                            id="current-location"
-                           class="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-400 focus:outline-none focus:border-emerald-500"
+                           class="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-400 focus:outline-none focus:border-emerald-500 disabled:opacity-50"
                            placeholder="例: 東京駅"
-                           value="東京駅">
+                           value=""
+                           {% if not session_started %}disabled{% endif %}>
                 </div>
                 <div>
                     <label class="text-xs text-slate-500 mb-1 block">目的地</label>
                     <input type="text"
                            id="destination"
-                           class="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-400 focus:outline-none focus:border-emerald-500"
+                           class="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-400 focus:outline-none focus:border-emerald-500 disabled:opacity-50"
                            placeholder="例: 横浜駅"
-                           value="横浜駅">
+                           value=""
+                           {% if not session_started %}disabled{% endif %}>
                 </div>
             </div>
         </div>
@@ -126,9 +129,10 @@
                 <input type="text"
                        id="message-input"
                        name="message"
-                       class="w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
-                       placeholder="立ち寄りたい場所の希望を入力してEnterで送信..."
-                       autocomplete="off">
+                       class="w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-400 focus:outline-none focus:border-blue-500 disabled:opacity-50"
+                       placeholder="{% if session_started %}メッセージを入力してEnterで送信...{% else %}Startボタンを押してセッションを開始してください{% endif %}"
+                       autocomplete="off"
+                       {% if not session_started %}disabled{% endif %}>
             </form>
 
             <!-- Start / Stop Buttons -->
@@ -180,15 +184,15 @@
                     <span id="output-status-dot" class="w-2 h-2 bg-emerald-400 rounded-full"></span>
                     <span class="font-medium text-sm text-emerald-300">llm_response</span>
                 </div>
-                <span id="output-status" class="text-xs text-emerald-400 mono">Waiting...</span>
+                <span id="output-status" class="text-xs text-emerald-400 mono">{% if session_started %}Waiting...{% else %}待機中{% endif %}</span>
             </div>
             <div id="output-json" class="p-4 mono text-sm max-h-64 overflow-y-auto">
-                <pre id="output-json-content" class="whitespace-pre-wrap"><span class="json-key">{</span>
+                <pre id="output-json-content" class="whitespace-pre-wrap">{% if session_started %}<span class="json-key">{</span>
   <span class="json-key">"message"</span>: <span class="json-string">"{{ welcome_message | replace('\n', '\\n') }}"</span>,
   <span class="json-key">"suggestions"</span>: [{% for s in suggestions %}<span class="json-string">"{{ s }}"</span>{% if not loop.last %}, {% endif %}{% endfor %}],
   <span class="json-key">"turn_count"</span>: <span class="json-number">{{ turn_count }}</span>,
   <span class="json-key">"is_complete"</span>: <span class="json-boolean">{{ 'true' if is_complete else 'false' }}</span>
-<span class="json-key">}</span></pre>
+<span class="json-key">}</span>{% else %}<span class="text-slate-500">// 待機中</span>{% endif %}</pre>
             </div>
         </div>
 
@@ -199,6 +203,7 @@
                 <span id="progress-indicator" class="text-xs text-slate-500">質問 {{ turn_count }}/{{ max_turns }}</span>
             </div>
             <div id="chat-container" class="p-4 space-y-4 max-h-80 overflow-y-auto">
+                {% if session_started %}
                 <!-- AI Welcome Message -->
                 <div class="flex items-start space-x-3">
                     <div class="w-8 h-8 bg-gradient-to-br from-violet-500 to-blue-500 rounded-full flex items-center justify-center flex-shrink-0">
@@ -212,6 +217,20 @@
                         </div>
                     </div>
                 </div>
+                {% else %}
+                <!-- Waiting state -->
+                <div class="flex items-center justify-center py-8">
+                    <div class="text-center">
+                        <div class="w-12 h-12 bg-slate-700 rounded-full flex items-center justify-center mx-auto mb-3">
+                            <svg class="w-6 h-6 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+                            </svg>
+                        </div>
+                        <p class="text-slate-500 text-sm">待機中</p>
+                        <p class="text-slate-600 text-xs mt-1">Startボタンを押してセッションを開始してください</p>
+                    </div>
+                </div>
+                {% endif %}
             </div>
         </div>
 
@@ -225,13 +244,15 @@
                 <span class="text-xs text-slate-500 mono">Metadata</span>
             </div>
             <div class="p-4 mono text-sm">
-                <pre class="whitespace-pre-wrap"><span class="json-key">{</span>
+                <pre id="session-state-json" class="whitespace-pre-wrap">{% if session_started %}<span class="json-key">{</span>
   <span class="json-key">"session_id"</span>: <span class="json-string">"{{ session_id }}"</span>,
   <span class="json-key">"status"</span>: <span class="json-string" id="session-status">"active"</span>,
   <span class="json-key">"turn_count"</span>: <span class="json-number" id="session-turn">{{ turn_count }}</span>,
   <span class="json-key">"max_turns"</span>: <span class="json-number">{{ max_turns }}</span>,
   <span class="json-key">"data_scope"</span>: [<span class="json-string">"preferences"</span>, <span class="json-string">"favorites"</span>]
-<span class="json-key">}</span></pre>
+<span class="json-key">}</span>{% else %}<span class="text-slate-500">// 待機中</span>
+<span id="session-status" style="display:none">"waiting"</span>
+<span id="session-turn" style="display:none">0</span>{% endif %}</pre>
             </div>
         </div>
     </section>
@@ -263,7 +284,7 @@
 
 {% block scripts %}
 <script>
-    const sessionId = "{{ session_id }}";
+    let sessionId = "{{ session_id }}";
     let turnCount = {{ turn_count }};
     const maxTurns = {{ max_turns }};
 
@@ -272,25 +293,24 @@
     const messageInput = document.getElementById('message-input');
     const chatContainer = document.getElementById('chat-container');
     const apiLog = document.getElementById('api-log');
-    const inputMessageDisplay = document.getElementById('input-message-display');
-    const inputTurnDisplay = document.getElementById('input-turn-display');
     const outputJsonContent = document.getElementById('output-json-content');
     const outputStatus = document.getElementById('output-status');
     const outputStatusDot = document.getElementById('output-status-dot');
     const progressIndicator = document.getElementById('progress-indicator');
     const sessionTurn = document.getElementById('session-turn');
-    const quickReplies = document.querySelectorAll('.quick-reply');
     const startButton = document.getElementById('start-button');
     const stopButton = document.getElementById('stop-button');
     const currentLocationInput = document.getElementById('current-location');
     const destinationInput = document.getElementById('destination');
 
     // Session state
-    let isSessionActive = true;
+    let isSessionActive = {{ 'true' if session_started else 'false' }};
+    let conversationPhase = 'waiting_start';  // waiting_start, waiting_location, asking_destination, asking_preferences, suggesting
 
     // Start button - Create new session
     startButton.addEventListener('click', async () => {
         startButton.disabled = true;
+        const startTime = Date.now();
 
         try {
             const response = await fetch('/api/v1/chat/start', {
@@ -301,14 +321,60 @@
                 body: JSON.stringify({}),
             });
 
+            const duration = Date.now() - startTime;
+
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
 
             const data = await response.json();
+            sessionId = data.session_id;
+            isSessionActive = true;
+            conversationPhase = 'waiting_location';
 
-            // Reload page with new session
-            window.location.href = '/';
+            // Update UI elements
+            document.getElementById('session-id-display').textContent = sessionId.substring(0, 8) + '...';
+
+            // Update session_state display
+            const sessionStateJson = document.getElementById('session-state-json');
+            sessionStateJson.innerHTML = `<span class="json-key">{</span>
+  <span class="json-key">"session_id"</span>: <span class="json-string">"${sessionId}"</span>,
+  <span class="json-key">"status"</span>: <span class="json-string" id="session-status">"active"</span>,
+  <span class="json-key">"turn_count"</span>: <span class="json-number" id="session-turn">0</span>,
+  <span class="json-key">"max_turns"</span>: <span class="json-number">${maxTurns}</span>,
+  <span class="json-key">"data_scope"</span>: [<span class="json-string">"preferences"</span>, <span class="json-string">"favorites"</span>]
+<span class="json-key">}</span>`;
+
+            // Enable route inputs (message input stays disabled until preferences phase)
+            messageInput.disabled = true;
+            messageInput.placeholder = '現在地と目的地を入力後に使用できます';
+            currentLocationInput.disabled = false;
+            destinationInput.disabled = true;  // Will be enabled after current location is entered
+
+            // Focus on current location input
+            currentLocationInput.focus();
+
+            // Update panels
+            document.getElementById('input-panel').classList.remove('opacity-50');
+            document.getElementById('input-status-dot').classList.add('animate-pulse');
+            document.getElementById('route-panel').classList.remove('opacity-50');
+            document.getElementById('route-status').textContent = '';
+
+            // Fetch and display user_data
+            await fetchAndDisplayUserData();
+
+            // Update input JSON display
+            updateInputJsonDisplay('', sessionId, 0);
+
+            // Update output with welcome message
+            updateOutputJson(data);
+            outputStatus.textContent = '200 OK';
+
+            // Add welcome message to chat
+            addMessage('assistant', data.message, data.suggestions);
+
+            // Log API call
+            logApiCall('POST', '/api/v1/chat/start', response.status, duration);
 
         } catch (error) {
             console.error('Error starting session:', error);
@@ -317,6 +383,36 @@
             startButton.disabled = false;
         }
     });
+
+    // Fetch user data and display
+    async function fetchAndDisplayUserData() {
+        try {
+            const response = await fetch('/api/v1/chat/debug/vector-store');
+            if (response.ok) {
+                const data = await response.json();
+
+                // Update user_data display (simplified for now)
+                document.getElementById('user-data-count').textContent = `${data.document_count} records`;
+                document.getElementById('user-data-json').innerHTML = `<span class="json-key">{</span>
+  <span class="json-key">"total_count"</span>: <span class="json-number">${data.document_count}</span>,
+  <span class="json-key">"collection"</span>: <span class="json-string">"${data.collection_name}"</span>,
+  <span class="json-key">"persist_dir"</span>: <span class="json-string">"${data.persist_dir}"</span>
+<span class="json-key">}</span>`;
+            }
+        } catch (error) {
+            console.error('Error fetching user data:', error);
+        }
+    }
+
+    // Update input JSON display
+    function updateInputJsonDisplay(message, sid, turn) {
+        const inputJsonContent = document.getElementById('input-json-content');
+        inputJsonContent.innerHTML = `<span class="json-key">{</span>
+  <span class="json-key">"message"</span>: <span class="json-string">"${escapeHtml(message)}"</span>,
+  <span class="json-key">"session_id"</span>: <span class="json-string">"${sid}"</span>,
+  <span class="json-key">"turn_count"</span>: <span class="json-number">${turn}</span>
+<span class="json-key">}</span>`;
+    }
 
     // Stop button - End current session
     stopButton.addEventListener('click', async () => {
@@ -331,31 +427,15 @@
                 method: 'DELETE',
             });
 
-            const endTime = Date.now();
-
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
 
-            // Update UI
-            isSessionActive = false;
-            document.getElementById('session-status').textContent = '"terminated"';
-            messageInput.disabled = true;
-            messageInput.placeholder = 'セッションが終了しました';
-
             // Log API call
             logApiCall('DELETE', `/api/v1/chat/session/${sessionId}`, response.status, 0);
 
-            // Add system message
-            const messageDiv = document.createElement('div');
-            messageDiv.className = 'flex items-center justify-center py-4';
-            messageDiv.innerHTML = `
-                <div class="px-4 py-2 bg-red-500/20 border border-red-500/50 rounded-lg">
-                    <p class="text-sm text-red-400">セッションが終了しました。Startボタンで新しいセッションを開始できます。</p>
-                </div>
-            `;
-            chatContainer.appendChild(messageDiv);
-            chatContainer.scrollTop = chatContainer.scrollHeight;
+            // Reset all UI to initial state
+            resetUIToInitialState();
 
         } catch (error) {
             console.error('Error stopping session:', error);
@@ -365,33 +445,109 @@
         }
     });
 
-    // Update input display when typing
-    messageInput.addEventListener('input', (e) => {
-        inputMessageDisplay.textContent = `"${e.target.value}"`;
-    });
+    // Reset all UI elements to initial (waiting) state
+    function resetUIToInitialState() {
+        // Reset session state
+        isSessionActive = false;
+        conversationPhase = 'waiting_start';
+        sessionId = '';
+        turnCount = 0;
 
-    // Quick reply buttons
-    quickReplies.forEach(btn => {
-        btn.addEventListener('click', () => {
-            messageInput.value = btn.textContent.trim();
-            inputMessageDisplay.textContent = `"${btn.textContent.trim()}"`;
-            messageInput.focus();
-        });
-    });
+        // Reset session display
+        document.getElementById('session-id-display').textContent = '待機中';
 
-    // Form submission
-    chatForm.addEventListener('submit', async (e) => {
+        // Reset user_data widget
+        document.getElementById('user-data-count').textContent = '-- records';
+        document.getElementById('user-data-json').innerHTML = '<span class="text-slate-500">// 待機中 - Startボタンを押してセッションを開始してください</span>';
+
+        // Reset user_message (input panel)
+        document.getElementById('input-panel').classList.add('opacity-50');
+        document.getElementById('input-status-dot').classList.remove('animate-pulse');
+        document.getElementById('input-json-content').innerHTML = '<span class="text-slate-500">// 待機中</span>';
+        messageInput.disabled = true;
+        messageInput.value = '';
+        messageInput.placeholder = 'Startボタンを押してセッションを開始してください';
+
+        // Reset route inputs
+        document.getElementById('route-panel').classList.add('opacity-50');
+        document.getElementById('route-status').textContent = '(セッション開始後に入力可能)';
+        currentLocationInput.value = '';
+        currentLocationInput.disabled = true;
+        destinationInput.value = '';
+        destinationInput.disabled = true;
+
+        // Reset llm_response (output panel)
+        outputStatus.textContent = '待機中';
+        outputStatusDot.classList.remove('animate-pulse');
+        outputJsonContent.innerHTML = '<span class="text-slate-500">// 待機中</span>';
+
+        // Reset session_state display
+        const sessionStateJson = document.getElementById('session-state-json');
+        sessionStateJson.innerHTML = `<span class="text-slate-500">// 待機中</span>
+<span id="session-status" style="display:none">"waiting"</span>
+<span id="session-turn" style="display:none">0</span>`;
+
+        // Reset progress indicator
+        progressIndicator.textContent = '質問 0/' + maxTurns;
+
+        // Reset Rendered UI (chat container)
+        chatContainer.innerHTML = `
+            <div class="flex items-center justify-center py-8">
+                <div class="text-center">
+                    <div class="w-12 h-12 bg-slate-700 rounded-full flex items-center justify-center mx-auto mb-3">
+                        <svg class="w-6 h-6 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+                        </svg>
+                    </div>
+                    <p class="text-slate-500 text-sm">待機中</p>
+                    <p class="text-slate-600 text-xs mt-1">Startボタンを押してセッションを開始してください</p>
+                </div>
+            </div>
+        `;
+
+        // Reset quick replies
+        document.getElementById('quick-replies').innerHTML = '<span class="text-xs text-slate-500">Quick:</span>';
+    }
+
+    // Current location input - Enter key handler
+    currentLocationInput.addEventListener('keypress', async (e) => {
+        if (e.key !== 'Enter') return;
         e.preventDefault();
 
-        const message = messageInput.value.trim();
-        if (!message) return;
+        if (!isSessionActive) {
+            alert('セッションが開始されていません。Startボタンを押してください。');
+            return;
+        }
 
-        // Disable input during processing
-        messageInput.disabled = true;
+        const location = currentLocationInput.value.trim();
+        if (!location) return;
+
+        await sendMessageToLLM(location, 'current_location');
+    });
+
+    // Destination input - Enter key handler
+    destinationInput.addEventListener('keypress', async (e) => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+
+        if (!isSessionActive) {
+            alert('セッションが開始されていません。Startボタンを押してください。');
+            return;
+        }
+
+        const destination = destinationInput.value.trim();
+        if (!destination) return;
+
+        await sendMessageToLLM(destination, 'destination');
+    });
+
+    // Common function to send message to LLM
+    async function sendMessageToLLM(message, inputType = 'general') {
+        // Track the user message
+        lastUserMessage = message;
 
         // Update input display
-        inputMessageDisplay.textContent = `"${message}"`;
-        inputTurnDisplay.textContent = turnCount;
+        updateInputJsonDisplay(message, sessionId, turnCount);
 
         // Add user message to chat
         addMessage('user', message);
@@ -403,9 +559,6 @@
         const startTime = Date.now();
 
         try {
-            const currentLocation = currentLocationInput.value.trim();
-            const destination = destinationInput.value.trim();
-
             const response = await fetch('/api/v1/chat/message', {
                 method: 'POST',
                 headers: {
@@ -414,13 +567,10 @@
                 body: JSON.stringify({
                     message: message,
                     session_id: sessionId,
-                    current_location: currentLocation || null,
-                    destination: destination || null,
                 }),
             });
 
-            const endTime = Date.now();
-            const duration = endTime - startTime;
+            const duration = Date.now() - startTime;
 
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
@@ -431,7 +581,6 @@
             // Update turn count
             turnCount = data.turn_count;
             sessionTurn.textContent = turnCount;
-            inputTurnDisplay.textContent = turnCount;
             progressIndicator.textContent = `質問 ${turnCount}/${maxTurns}`;
 
             // Update output JSON display
@@ -450,11 +599,29 @@
             outputStatus.textContent = `${response.status} OK`;
             outputStatusDot.classList.remove('animate-pulse');
 
+            // Update conversation phase and UI based on input type
+            if (inputType === 'current_location') {
+                conversationPhase = 'asking_destination';
+                currentLocationInput.disabled = true;
+                destinationInput.disabled = false;
+                destinationInput.focus();
+            } else if (inputType === 'destination') {
+                conversationPhase = 'asking_preferences';
+                destinationInput.disabled = true;
+                messageInput.disabled = false;
+                messageInput.placeholder = '他に行きたいところ・やってみたいことを入力...';
+                messageInput.focus();
+            } else {
+                updateConversationPhase(data);
+            }
+
             // Check if complete
             if (data.is_complete) {
                 document.getElementById('session-status').textContent = '"completed"';
-                messageInput.placeholder = '目的地が決定しました！';
+                messageInput.placeholder = '会話が完了しました';
             }
+
+            return data;
 
         } catch (error) {
             console.error('Error:', error);
@@ -463,6 +630,43 @@
             outputStatusDot.classList.remove('bg-emerald-400');
             outputStatusDot.classList.add('bg-red-400');
             logApiCall('POST', '/api/v1/chat/message', 'Error', 0);
+            throw error;
+        }
+    }
+
+    // Update input display when typing
+    messageInput.addEventListener('input', (e) => {
+        updateInputJsonDisplay(e.target.value, sessionId, turnCount);
+    });
+
+    // Quick reply button click handler (dynamic)
+    document.getElementById('quick-replies').addEventListener('click', (e) => {
+        if (e.target.classList.contains('quick-reply')) {
+            messageInput.value = e.target.textContent.trim();
+            updateInputJsonDisplay(e.target.textContent.trim(), sessionId, turnCount);
+            messageInput.focus();
+        }
+    });
+
+    // Form submission (for preferences and later messages)
+    chatForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        if (!isSessionActive) {
+            alert('セッションが開始されていません。Startボタンを押してください。');
+            return;
+        }
+
+        const message = messageInput.value.trim();
+        if (!message) return;
+
+        // Disable input during processing
+        messageInput.disabled = true;
+
+        try {
+            await sendMessageToLLM(message, 'general');
+        } catch (error) {
+            // Error already handled in sendMessageToLLM
         } finally {
             // Re-enable input
             messageInput.disabled = false;
@@ -470,6 +674,29 @@
             messageInput.focus();
         }
     });
+
+    // Track last user message for route input updates
+    let lastUserMessage = '';
+
+    // Update conversation phase based on response
+    function updateConversationPhase(data) {
+        const msgLower = data.message.toLowerCase();
+
+        if (msgLower.includes('どこに行きたい')) {
+            // User just entered current location, now asking for destination
+            currentLocationInput.value = lastUserMessage;
+            conversationPhase = 'asking_destination';
+            messageInput.placeholder = '目的地を入力してください（例: 横浜駅）';
+        } else if (msgLower.includes('他に行きたいところ') || msgLower.includes('やってみたいこと')) {
+            // User just entered destination, now asking for preferences
+            destinationInput.value = lastUserMessage;
+            conversationPhase = 'asking_preferences';
+            messageInput.placeholder = '他に行きたいところ・やってみたいことを入力...';
+        } else if (data.suggestions && data.suggestions.length > 0) {
+            conversationPhase = 'suggesting';
+            messageInput.placeholder = '選択肢から選ぶか、追加のリクエストを入力...';
+        }
+    }
 
     function addMessage(role, content, suggestions = []) {
         const messageDiv = document.createElement('div');

@@ -25,23 +25,19 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 async def index(request: Request) -> HTMLResponse:
     """
     トップページ（データフロー可視化ダッシュボード）
+
+    初期状態ではセッションを作成せず、空の状態で表示。
+    Startボタン押下後にセッション作成とデータ読み込みを行う。
     """
-    # 新しいセッションを作成
-    session_id = conversation_service.create_session()
-
-    # ウェルカムメッセージを取得
-    welcome = conversation_service.get_welcome_message(session_id)
-
-    # data/user_data のデータを取得
-    user_data = get_user_data_summary()
-
+    # 初期状態: セッションなし、空のデータ
     context = {
         "request": request,
-        "session_id": session_id,
-        "user_data": user_data,
-        "welcome_message": welcome.message,
-        "suggestions": welcome.suggestions,
-        "turn_count": welcome.turn_count,
+        "session_id": "",
+        "session_started": False,
+        "user_data": {"total_count": 0, "file_count": 0, "records": []},
+        "welcome_message": "Startボタンを押してセッションを開始してください。",
+        "suggestions": [],
+        "turn_count": 0,
         "max_turns": 3,
         "is_complete": False,
         "api_logs": [],
