@@ -832,8 +832,8 @@
                 audioArray[i] = audioBytes.charCodeAt(i);
             }
 
-            // Blobを作成（MP3形式）
-            const audioBlob = new Blob([audioArray], { type: 'audio/mpeg' });
+            // Blobを作成（WAV形式）
+            const audioBlob = new Blob([audioArray], { type: 'audio/wav' });
             const audioUrl = URL.createObjectURL(audioBlob);
 
             // 音声を再生
@@ -858,6 +858,55 @@
     function playLastAudioResponse() {
         if (lastAudioData) {
             playAudioResponse(lastAudioData);
+        }
+    }
+
+    // WebSocketから受信したBlobを直接再生
+    let currentAudio = null;  // 現在再生中のオーディオ
+
+    function playAudioBlob(blob) {
+        console.log('playAudioBlob called with blob size:', blob.size);
+
+        // 前の音声を停止
+        if (currentAudio) {
+            currentAudio.pause();
+            currentAudio = null;
+        }
+
+        try {
+            // WAV形式として明示的に指定
+            const audioBlob = new Blob([blob], { type: 'audio/wav' });
+            const audioUrl = URL.createObjectURL(audioBlob);
+            console.log('Audio URL created:', audioUrl);
+
+            const audio = new Audio();
+            currentAudio = audio;
+
+            audio.oncanplaythrough = () => {
+                console.log('Audio ready to play');
+                audio.play().then(() => {
+                    console.log('Audio playback started');
+                }).catch(err => {
+                    console.error('音声再生エラー:', err);
+                });
+            };
+
+            audio.onerror = (e) => {
+                console.error('Audio load error:', e);
+            };
+
+            audio.onended = () => {
+                console.log('Audio playback ended');
+                URL.revokeObjectURL(audioUrl);
+                currentAudio = null;
+            };
+
+            audio.src = audioUrl;
+            audio.load();
+
+            console.log('WebSocket音声を読み込み中...', blob.size, 'bytes');
+        } catch (error) {
+            console.error('Blob音声再生エラー:', error);
         }
     }
 
@@ -1016,6 +1065,7 @@
             const wsUrl = `${wsProtocol}//${window.location.host}/api/v1/ws/voice/${sessionId}`;
 
             voiceWs = new WebSocket(wsUrl);
+            voiceWs.binaryType = 'blob';  // バイナリデータをBlobとして受信
 
             voiceWs.onopen = () => {
                 console.log('Voice WebSocket connected');
@@ -1027,8 +1077,24 @@
             };
 
             voiceWs.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-                handleVoiceMessage(data);
+                console.log('WebSocket message received:', typeof event.data, event.data instanceof Blob ? `Blob(${event.data.size})` : event.data.substring(0, 100));
+
+                // バイナリデータ（音声）かテキストデータ（JSON）かを判定
+                if (event.data instanceof Blob) {
+                    // バイナリ音声データを再生
+                    console.log('Playing audio blob:', event.data.size, 'bytes');
+                    playAudioBlob(event.data);
+                } else if (typeof event.data === 'string') {
+                    // JSONデータを処理
+                    try {
+                        const data = JSON.parse(event.data);
+                        handleVoiceMessage(data);
+                    } catch (e) {
+                        console.error('JSON parse error:', e);
+                    }
+                } else {
+                    console.warn('Unknown message type:', typeof event.data);
+                }
             };
 
             voiceWs.onerror = (error) => {
@@ -1160,10 +1226,7 @@
                 addMessage('user', messageInput.value || transcriptionText.textContent);
                 addMessage('assistant', data.message, data.suggestions);
 
-                // 音声があれば再生
-                if (data.has_audio && data.audio_data) {
-                    playAudioResponse(data.audio_data);
-                }
+                // 音声はバイナリで別途送信されるため、playAudioBlobで再生される
 
                 // Update quick replies
                 updateQuickReplies(data.suggestions);
