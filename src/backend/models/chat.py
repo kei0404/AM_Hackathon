@@ -79,6 +79,15 @@ class ChatResponse(BaseModel):
     turn_count: int = Field(..., description="現在の会話ターン数")
     is_complete: bool = Field(False, description="目的地決定が完了したか")
     suggestions: list[str] = Field(default_factory=list, description="提案された選択肢")
+    # 音声出力フィールド
+    audio_data: Optional[str] = Field(
+        None,
+        description="音声データ（Base64エンコードされたMP3データ）"
+    )
+    has_audio: bool = Field(
+        False,
+        description="音声データが含まれているかどうか"
+    )
 
 
 class ConversationContext(BaseModel):

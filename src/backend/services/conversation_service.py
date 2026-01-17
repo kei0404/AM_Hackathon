@@ -2,6 +2,7 @@
 会話サービス - セッション管理と会話フローの制御（TTL付きキャッシュ）
 """
 
+import base64
 import logging
 import threading
 import uuid
@@ -18,6 +19,7 @@ from ..models.chat import (
     MessageRole,
 )
 from .llm_service import llm_service
+from .tts_service import tts_service
 from .vector_store import vector_store
 
 logger = logging.getLogger(__name__)
@@ -233,6 +235,29 @@ class ConversationService:
             max_sessions=settings.MAX_SESSIONS,
             cleanup_interval=settings.SESSION_CLEANUP_INTERVAL,
         )
+
+    def _generate_audio(self, text: str) -> tuple[Optional[str], bool]:
+        """
+        テキストから音声データを生成する
+
+        Args:
+            text: 音声に変換するテキスト
+
+        Returns:
+            (Base64エンコードされた音声データ, 音声があるかどうか)
+        """
+        if not tts_service.is_available():
+            return None, False
+
+        try:
+            audio_bytes = tts_service.text_to_speech(text)
+            if audio_bytes:
+                audio_data = base64.b64encode(audio_bytes).decode("utf-8")
+                return audio_data, True
+        except Exception as e:
+            logger.warning(f"TTS変換に失敗しました: {e}")
+
+        return None, False
 
     def create_session(
         self,
@@ -664,12 +689,17 @@ class ConversationService:
         # セッションを更新（TTLも延長される）
         self._cache.set(session_id, context)
 
+        # TTS音声生成
+        audio_data, has_audio = self._generate_audio(response_message)
+
         return ChatResponse(
             message=response_message,
             session_id=session_id,
             turn_count=context.turn_count,
             is_complete=is_complete,
             suggestions=suggestions,
+            audio_data=audio_data,
+            has_audio=has_audio,
         )
 
     def get_welcome_message(self, session_id: Optional[str] = None) -> ChatResponse:
@@ -715,12 +745,17 @@ class ConversationService:
         # セッションを更新
         self._cache.set(session_id, context)
 
+        # TTS音声生成
+        audio_data, has_audio = self._generate_audio(welcome_message)
+
         return ChatResponse(
             message=welcome_message,
             session_id=session_id,
             turn_count=0,
             is_complete=False,
             suggestions=[],
+            audio_data=audio_data,
+            has_audio=has_audio,
         )
 
 

@@ -455,6 +455,11 @@
             // Add welcome message to chat
             addMessage('assistant', data.message, data.suggestions);
 
+            // 音声があれば再生
+            if (data.has_audio && data.audio_data) {
+                playAudioResponse(data.audio_data);
+            }
+
             // Log API call
             logApiCall('POST', '/api/v1/chat/start', response.status, duration);
 
@@ -699,6 +704,11 @@
             // Add AI message to chat
             addMessage('assistant', data.message, data.suggestions);
 
+            // 音声があれば再生
+            if (data.has_audio && data.audio_data) {
+                playAudioResponse(data.audio_data);
+            }
+
             // Update quick replies
             updateQuickReplies(data.suggestions);
 
@@ -805,6 +815,49 @@
         } else if (data.suggestions && data.suggestions.length > 0) {
             conversationPhase = 'suggesting';
             messageInput.placeholder = '選択肢から選ぶか、追加のリクエストを入力...';
+        }
+    }
+
+    // 音声再生機能
+    let lastAudioData = null;  // 最後の音声データを保持
+
+    function playAudioResponse(audioData) {
+        if (!audioData) return;
+
+        try {
+            // Base64デコード
+            const audioBytes = atob(audioData);
+            const audioArray = new Uint8Array(audioBytes.length);
+            for (let i = 0; i < audioBytes.length; i++) {
+                audioArray[i] = audioBytes.charCodeAt(i);
+            }
+
+            // Blobを作成（MP3形式）
+            const audioBlob = new Blob([audioArray], { type: 'audio/mpeg' });
+            const audioUrl = URL.createObjectURL(audioBlob);
+
+            // 音声を再生
+            const audio = new Audio(audioUrl);
+            audio.play().catch(err => {
+                console.error('音声再生エラー:', err);
+            });
+
+            // クリーンアップ
+            audio.addEventListener('ended', () => {
+                URL.revokeObjectURL(audioUrl);
+            });
+
+            // 最後の音声データを保存
+            lastAudioData = audioData;
+            console.log('音声を再生中...');
+        } catch (error) {
+            console.error('音声データの処理エラー:', error);
+        }
+    }
+
+    function playLastAudioResponse() {
+        if (lastAudioData) {
+            playAudioResponse(lastAudioData);
         }
     }
 
@@ -1106,6 +1159,11 @@
                 // Add messages to chat
                 addMessage('user', messageInput.value || transcriptionText.textContent);
                 addMessage('assistant', data.message, data.suggestions);
+
+                // 音声があれば再生
+                if (data.has_audio && data.audio_data) {
+                    playAudioResponse(data.audio_data);
+                }
 
                 // Update quick replies
                 updateQuickReplies(data.suggestions);

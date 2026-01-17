@@ -30,7 +30,7 @@ class Settings:
     EMBEDDING_API_KEY: str = os.getenv("EMBEDDING_API_KEY", "")
     EMBEDDING_MODEL: str = os.getenv("embedding_model", "text-embedding-v4")
 
-    # Audio (ASR/TTS) 設定
+    # Audio (ASR) 設定
     AUDIO_API_KEY: str = os.getenv("AUDIO_API_KEY", "")
     AUDIO_MODEL: str = os.getenv("audio_model", "qwen3-asr-flash-realtime")
     AUDIO_BASE_URL: str = os.getenv(
@@ -39,6 +39,12 @@ class Settings:
     AUDIO_SAMPLE_RATE: int = 16000
     AUDIO_FORMAT: str = "pcm"
     AUDIO_LANGUAGE: str = "ja"  # 日本語
+
+    # TTS (Text-to-Speech) 設定
+    TTS_API_KEY: str = os.getenv("TTS_API_KEY", "")
+    TTS_MODEL: str = os.getenv("tts_model", "qwen3-tts-flash-2025-11-27")
+    TTS_VOICE: str = os.getenv("voice", "Cherry")
+    TTS_SPEED: float = float(os.getenv("TTS_SPEED", "1.0"))
 
     # ChromaDB 設定
     CHROMA_PERSIST_DIR: str = str(project_root / "data" / "chroma")

@@ -2,6 +2,7 @@
 WebSocketエンドポイント - 音声ストリーミング入力
 """
 
+import base64
 import json
 import logging
 from typing import Optional
@@ -127,7 +128,15 @@ async def websocket_voice_endpoint(
                 "turn_count": response.turn_count,
                 "is_complete": response.is_complete,
                 "suggestions": response.suggestions,
+                "has_audio": response.has_audio,
             })
+
+            # 音声データがあればバイナリで送信
+            if response.has_audio and response.audio_data:
+                audio_bytes = base64.b64decode(response.audio_data)
+                await manager.send_bytes(session_id, audio_bytes)
+                logger.info(f"音声データを送信: {len(audio_bytes)} bytes")
+
             logger.info(f"チャット処理完了: turn_count={response.turn_count}")
 
         except Exception as e:
@@ -323,7 +332,14 @@ async def websocket_chat_endpoint(
                             "turn_count": response.turn_count,
                             "is_complete": response.is_complete,
                             "suggestions": response.suggestions,
+                            "has_audio": response.has_audio,
                         })
+
+                        # 音声データがあればバイナリで送信
+                        if response.has_audio and response.audio_data:
+                            audio_bytes = base64.b64decode(response.audio_data)
+                            await websocket.send_bytes(audio_bytes)
+                            logger.info(f"音声データを送信: {len(audio_bytes)} bytes")
 
                     except Exception as e:
                         logger.error(f"チャット処理エラー: {e}")
