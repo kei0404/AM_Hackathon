@@ -17,8 +17,14 @@ from ..models.chat import (
     ConversationContext,
     ConversationPhase,
     MessageRole,
+    PlaceInfo,
 )
+from .geocoding_service import geocoding_service
 from .llm_service import llm_service
+from .sample_data import (
+    get_data_from_files,
+    save_sample_data_to_files,
+)
 from .tts_service import tts_service
 from .vector_store import vector_store
 
@@ -262,6 +268,52 @@ class ConversationService:
 
         return None, False
 
+    def initialize_user_data(self) -> int:
+        """
+        ユーザーデータを初期化する（WebSocketセッション自動生成時に使用）
+
+        処理フロー:
+        1. VectorStoreを再初期化
+        2. サンプルデータをファイルに保存
+        3. ファイルからデータを読み込み、ベクトル化してChromaDBに登録
+
+        Returns:
+            登録されたドキュメント数
+        """
+        try:
+            # VectorStoreを先に再初期化
+            vector_store.reinitialize()
+            logger.info("[WebSocket] VectorStore再初期化完了")
+
+            # sample_data.py の VISIT_RECORDS を data/user_data/*.json に保存
+            saved_count = save_sample_data_to_files()
+            logger.info(f"[WebSocket] data/user_data に保存: {saved_count}件")
+
+            # ファイルからデータを読み込み、ベクトル化してChromaDBに登録
+            vector_data = get_data_from_files()
+            logger.info(f"[WebSocket] ベクトル化対象: {len(vector_data)}件")
+
+            if vector_data:
+                doc_ids = [d["id"] for d in vector_data]
+                texts = [d["text"] for d in vector_data]
+                metadatas = [d["metadata"] for d in vector_data]
+
+                vector_store.add_documents(
+                    doc_ids=doc_ids,
+                    texts=texts,
+                    metadatas=metadatas,
+                )
+
+                count = vector_store.count()
+                logger.info(f"[WebSocket] ChromaDB登録完了: {count}件")
+                return count
+
+            return 0
+
+        except Exception as e:
+            logger.error(f"[WebSocket] データ初期化エラー: {e}", exc_info=True)
+            return 0
+
     def create_session(
         self,
         user_preferences: Optional[dict] = None,
@@ -406,12 +458,49 @@ class ConversationService:
         # TTS音声生成
         audio_data, has_audio = self._generate_audio(llm_result["message"])
 
+        # 提案関連の情報を設定
+        suggestion_index = None
+        suggestion_total = None
+        if context.suggestions_list:
+            suggestion_index = context.current_suggestion_index + 1  # 1-indexed
+            suggestion_total = len(context.suggestions_list)
+
+        # 旅程情報を設定（完了時のみ、緯度・経度付き）
+        destination_info: Optional[PlaceInfo] = None
+        stopover_info: Optional[PlaceInfo] = None
+
+        if llm_result["is_complete"]:
+            # 目的地の緯度・経度を取得
+            if context.destination:
+                if context.destination_info:
+                    destination_info = context.destination_info
+                else:
+                    destination_info = geocoding_service.geocode(context.destination)
+                    context.destination_info = destination_info
+                    logger.info(f"目的地ジオコーディング: {destination_info}")
+
+            # 立ち寄り場所の緯度・経度を取得
+            if context.selected_stopover:
+                if context.selected_stopover_info:
+                    stopover_info = context.selected_stopover_info
+                else:
+                    stopover_info = geocoding_service.geocode(context.selected_stopover)
+                    context.selected_stopover_info = stopover_info
+                    logger.info(f"立ち寄り場所ジオコーディング: {stopover_info}")
+
+            # コンテキストを更新
+            self._cache.set(session_id, context)
+
         return ChatResponse(
             message=llm_result["message"],
             session_id=session_id,
             turn_count=llm_result["turn_count"],
             is_complete=llm_result["is_complete"],
             suggestions=llm_result["suggestions"],
+            suggestion_index=suggestion_index,
+            suggestion_total=suggestion_total,
+            destination=destination_info,
+            stopover=stopover_info,
             audio_data=audio_data,
             has_audio=has_audio,
         )

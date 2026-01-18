@@ -86,17 +86,25 @@ async def websocket_voice_endpoint(
         - {"type": "response", "message": "...", "suggestions": [...]}
         - {"type": "error", "message": "..."}
     """
-    await manager.connect(websocket, session_id)
-
-    # セッションの確認
+    # セッションの確認 - 存在しない場合は自動生成
+    original_session_id = session_id
     context = conversation_service.get_session(session_id)
     if not context:
-        await websocket.send_json({
-            "type": "error",
-            "message": "セッションが見つかりません。先にセッションを開始してください。",
-        })
-        await websocket.close()
-        return
+        # ユーザーデータを初期化（VectorStore、サンプルデータ）
+        data_count = conversation_service.initialize_user_data()
+        logger.info(f"ユーザーデータを初期化: {data_count}件")
+
+        # セッションが存在しない場合、自動的に作成
+        session_id = conversation_service.create_session()
+        context = conversation_service.get_session(session_id)
+        logger.info(f"新しいセッションを自動生成: {session_id}")
+
+    # WebSocket接続を確立（新しいセッションIDで）
+    await manager.connect(websocket, session_id)
+
+    # 古いセッションIDで接続が登録されていた場合は削除
+    if original_session_id != session_id and original_session_id in manager.active_connections:
+        del manager.active_connections[original_session_id]
 
     await websocket.send_json({
         "type": "connected",
@@ -128,6 +136,10 @@ async def websocket_voice_endpoint(
                 "turn_count": response.turn_count,
                 "is_complete": response.is_complete,
                 "suggestions": response.suggestions,
+                "suggestion_index": response.suggestion_index,
+                "suggestion_total": response.suggestion_total,
+                "destination": response.destination.model_dump() if response.destination else None,
+                "stopover": response.stopover.model_dump() if response.stopover else None,
                 "has_audio": response.has_audio,
             })
 
@@ -293,20 +305,30 @@ async def websocket_chat_endpoint(
     """
     テキストチャット用WebSocketエンドポイント
     """
-    await manager.connect(websocket, session_id)
-
+    # セッションの確認 - 存在しない場合は自動生成
+    original_session_id = session_id
     context = conversation_service.get_session(session_id)
     if not context:
-        await websocket.send_json({
-            "type": "error",
-            "message": "セッションが見つかりません",
-        })
-        await websocket.close()
-        return
+        # ユーザーデータを初期化（VectorStore、サンプルデータ）
+        data_count = conversation_service.initialize_user_data()
+        logger.info(f"ユーザーデータを初期化: {data_count}件")
+
+        # セッションが存在しない場合、自動的に作成
+        session_id = conversation_service.create_session()
+        context = conversation_service.get_session(session_id)
+        logger.info(f"新しいセッションを自動生成: {session_id}")
+
+    # WebSocket接続を確立（新しいセッションIDで）
+    await manager.connect(websocket, session_id)
+
+    # 古いセッションIDで接続が登録されていた場合は削除
+    if original_session_id != session_id and original_session_id in manager.active_connections:
+        del manager.active_connections[original_session_id]
 
     await websocket.send_json({
         "type": "connected",
         "message": "チャットセッションが開始されました",
+        "session_id": session_id,
     })
 
     try:
@@ -332,6 +354,10 @@ async def websocket_chat_endpoint(
                             "turn_count": response.turn_count,
                             "is_complete": response.is_complete,
                             "suggestions": response.suggestions,
+                            "suggestion_index": response.suggestion_index,
+                            "suggestion_total": response.suggestion_total,
+                            "destination": response.destination.model_dump() if response.destination else None,
+                            "stopover": response.stopover.model_dump() if response.stopover else None,
                             "has_audio": response.has_audio,
                         })
 

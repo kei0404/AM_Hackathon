@@ -49,6 +49,14 @@ class LocationData(BaseModel):
     accuracy: Optional[float] = Field(None, description="GPS精度（メートル）")
 
 
+class PlaceInfo(BaseModel):
+    """場所情報（緯度・経度付き）"""
+
+    name: str = Field(..., description="場所名")
+    latitude: Optional[float] = Field(None, description="緯度")
+    longitude: Optional[float] = Field(None, description="経度")
+
+
 class ChatRequest(BaseModel):
     """チャットリクエスト"""
 
@@ -79,10 +87,28 @@ class ChatResponse(BaseModel):
     turn_count: int = Field(..., description="現在の会話ターン数")
     is_complete: bool = Field(False, description="目的地決定が完了したか")
     suggestions: list[str] = Field(default_factory=list, description="提案された選択肢")
+    # 提案管理フィールド
+    suggestion_index: Optional[int] = Field(
+        None,
+        description="現在の提案インデックス（1, 2, 3）"
+    )
+    suggestion_total: Optional[int] = Field(
+        None,
+        description="提案の総数（通常3）"
+    )
+    # 旅程情報フィールド（緯度・経度付き）
+    destination: Optional[PlaceInfo] = Field(
+        None,
+        description="決定した目的地（名前・緯度・経度）"
+    )
+    stopover: Optional[PlaceInfo] = Field(
+        None,
+        description="決定した立ち寄り場所（名前・緯度・経度）"
+    )
     # 音声出力フィールド
     audio_data: Optional[str] = Field(
         None,
-        description="音声データ（Base64エンコードされたMP3データ）"
+        description="音声データ（Base64エンコードされたWAVデータ）"
     )
     has_audio: bool = Field(
         False,
@@ -101,9 +127,12 @@ class ConversationContext(BaseModel):
     favorite_spots: list[dict] = Field(default_factory=list)
     visit_history: list[dict] = Field(default_factory=list)
     current_location: Optional[str] = None
+    current_location_info: Optional[PlaceInfo] = None  # 現在地（緯度・経度付き）
     destination: Optional[str] = None
+    destination_info: Optional[PlaceInfo] = None  # 目的地（緯度・経度付き）
     additional_preferences: Optional[str] = None  # 追加の希望（やりたいこと等）
     # 提案関連の新しいフィールド
     suggestions_list: list[dict] = Field(default_factory=list)  # RAG検索結果からの3つの提案
     current_suggestion_index: int = 0  # 現在提案中のインデックス（0, 1, 2）
     selected_stopover: Optional[str] = None  # 選択された立ち寄り先
+    selected_stopover_info: Optional[PlaceInfo] = None  # 選択された立ち寄り先（緯度・経度付き）
