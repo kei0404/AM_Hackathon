@@ -1,0 +1,109 @@
+@startuml Data Plug Copilot - Conversation Flow
+
+title Data Plug Copilot - Conversation Flow (Max 3 Turns)
+
+skinparam state {
+  BackgroundColor #FFF4E6
+  BorderColor #FF8C00
+  FontColor #000000
+}
+
+skinparam arrow {
+  Color #FF8C00
+}
+
+[*] --> WaitingLocation : Session Start
+
+state WaitingLocation {
+  :Receive Current Location\n(GPS or Text);
+}
+
+WaitingLocation --> AskingDestination : Location Received
+
+state AskingDestination {
+  :LLM: "Where do you want to go?";
+  :User Input: Destination;
+}
+
+AskingDestination --> AskingPreferences : Destination Received
+
+state AskingPreferences {
+  :LLM: "What else do you want to do?";
+  :User Input: Additional Preferences;
+}
+
+AskingPreferences --> SuggestingFirst : Preferences Received
+
+state SuggestingFirst {
+  :RAG Search: Find Similar Places;
+  :LLM: Generate First Suggestion;
+  :Display: Place 1/3;
+}
+
+SuggestingFirst --> SuggestingSecond : User Continues
+
+state SuggestingSecond {
+  :RAG Search: Find Similar Places;
+  :LLM: Generate Second Suggestion;
+  :Display: Place 2/3;
+}
+
+SuggestingSecond --> SuggestingThird : User Continues
+
+state SuggestingThird {
+  :RAG Search: Find Similar Places;
+  :LLM: Generate Third Suggestion;
+  :Display: Place 3/3;
+}
+
+SuggestingThird --> Navigating : User Selects Place
+
+state Navigating {
+  :Destination Decided;
+  :Turn Count = 3;
+  :is_complete = True;
+}
+
+Navigating --> [*] : Session End\nData Cleanup
+
+note right of WaitingLocation
+  Phase: WAITING_LOCATION
+  Turn: 0
+end note
+
+note right of AskingDestination
+  Phase: ASKING_DESTINATION
+  Turn: 1
+end note
+
+note right of AskingPreferences
+  Phase: ASKING_PREFERENCES
+  Turn: 2
+end note
+
+note right of SuggestingFirst
+  Phase: SUGGESTING_FIRST
+  Turn: 2
+  RAG Results Used
+end note
+
+note right of SuggestingSecond
+  Phase: SUGGESTING_SECOND
+  Turn: 2
+  RAG Results Used
+end note
+
+note right of SuggestingThird
+  Phase: SUGGESTING_THIRD
+  Turn: 2
+  RAG Results Used
+end note
+
+note right of Navigating
+  Phase: NAVIGATING
+  Turn: 3
+  Complete
+end note
+
+@enduml
+

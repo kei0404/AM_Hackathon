@@ -1,0 +1,151 @@
+@startuml Data Plug Copilot - Component Diagram
+
+title Data Plug Copilot - Component Structure
+
+skinparam componentStyle rectangle
+skinparam linetype ortho
+
+package "src/backend" {
+  
+  component [main.py\nFastAPI App] as MainApp {
+    interface "FastAPI Application" as FastAPIApp
+  }
+  
+  package "api" {
+    component [chat.py\nREST API] as ChatAPI {
+      interface "/api/v1/chat/start" as StartEndpoint
+      interface "/api/v1/chat/message" as MessageEndpoint
+      interface "/api/v1/chat/session/{id}" as SessionEndpoint
+    }
+    
+    component [vector.py\nVector API] as VectorAPI {
+      interface "/api/v1/vector/search" as SearchEndpoint
+      interface "/api/v1/vector/add" as AddEndpoint
+      interface "/api/v1/vector/init" as InitEndpoint
+    }
+    
+    component [websocket.py\nWebSocket API] as WebSocketAPI {
+      interface "/ws/voice/{session_id}" as VoiceEndpoint
+      interface "/ws/chat/{session_id}" as ChatEndpoint
+    }
+    
+    component [web.py\nWeb Router] as WebRouter {
+      interface "/" as IndexPage
+      interface "/chat/{session_id}" as ChatPage
+    }
+  }
+  
+  package "services" {
+    component [conversation_service.py] as ConversationService {
+      class "SessionCache" as SessionCache
+      class "ConversationService" as ConvService
+    }
+    
+    component [llm_service.py] as LLMService {
+      class "LLMService" as LLM
+    }
+    
+    component [vector_store.py] as VectorStore {
+      class "VectorStore" as Vector
+    }
+    
+    component [speech_service.py] as SpeechService {
+      class "RealtimeASRClient" as ASRClient
+      class "SpeechService" as Speech
+    }
+    
+    component [tts_service.py] as TTSService {
+      class "TTSService" as TTS
+    }
+    
+    component [embedding_service.py] as EmbeddingService {
+      class "EmbeddingService" as Embedding
+    }
+    
+    component [sample_data.py] as SampleData {
+      class "VISIT_RECORDS" as VisitRecords
+      function "get_all_sample_data()" as GetSampleData
+      function "save_sample_data_to_files()" as SaveData
+    }
+  }
+  
+  package "models" {
+    component [chat.py] as ChatModels {
+      class "ChatRequest" as ChatReq
+      class "ChatResponse" as ChatResp
+      class "ConversationContext" as ConvContext
+      class "ConversationPhase" as Phase
+    }
+  }
+  
+  component [config.py\nSettings] as Config {
+    class "Settings" as Settings
+  }
+}
+
+package "data" {
+  database "chroma/\nChromaDB" as ChromaDB
+  folder "user_data/\nJSON Files" as UserDataFiles
+}
+
+cloud "External APIs" {
+  component "DashScope\nQwen LLM" as DashScopeLLM
+  component "DashScope\nQwen ASR" as DashScopeASR
+  component "DashScope\nQwen TTS" as DashScopeTTS
+  component "DashScope\nEmbedding" as DashScopeEmbedding
+}
+
+' API to Service connections
+ChatAPI --> ConversationService : uses
+ChatAPI --> VectorStore : uses
+ChatAPI --> SampleData : uses
+WebSocketAPI --> ConversationService : uses
+WebSocketAPI --> SpeechService : uses
+WebSocketAPI --> TTSService : uses
+
+' Service connections
+ConversationService --> LLMService : calls
+ConversationService --> VectorStore : calls
+VectorStore --> EmbeddingService : uses
+VectorStore --> ChromaDB : stores
+VectorStore --> UserDataFiles : loads
+ConversationService --> UserDataFiles : loads
+SampleData --> UserDataFiles : saves
+
+' External API connections
+LLMService --> DashScopeLLM : API calls
+SpeechService --> DashScopeASR : WebSocket
+TTSService --> DashScopeTTS : API calls
+EmbeddingService --> DashScopeEmbedding : API calls
+
+' Configuration
+MainApp --> Config : loads
+ChatAPI --> Config : uses
+WebSocketAPI --> Config : uses
+ConversationService --> Config : uses
+LLMService --> Config : uses
+VectorStore --> Config : uses
+SpeechService --> Config : uses
+TTSService --> Config : uses
+EmbeddingService --> Config : uses
+
+note right of SessionCache
+  In-Memory Cache
+  TTL: 30 minutes
+  Thread-safe
+end note
+
+note right of ChromaDB
+  Persistent Vector DB
+  Stores visit history
+  Similarity search
+end note
+
+note right of UserDataFiles
+  JSON format
+  user_data.json
+  user_data_1.json, ...
+end note
+
+@enduml
+

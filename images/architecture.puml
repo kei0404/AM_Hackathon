@@ -1,0 +1,90 @@
+@startuml Data Plug Copilot - Architecture Diagram
+
+title Data Plug Copilot - System Architecture
+
+skinparam componentStyle rectangle
+skinparam linetype ortho
+
+package "Client Layer" {
+  [Mobile App\nReact Native] as MobileApp
+  [Web Browser\nJinja2 Templates] as WebBrowser
+  [Terminal CLI\nTest Tool] as CLI
+}
+
+package "API Layer" {
+  [FastAPI Application] as FastAPI
+  [REST API\n/chat, /vector] as RESTAPI
+  [WebSocket API\n/ws/voice, /ws/chat] as WebSocketAPI
+  [Web Router\nHTML Pages] as WebRouter
+}
+
+package "Service Layer" {
+  [Conversation Service\nSession Management] as ConversationService
+  [LLM Service\nQwen API] as LLMService
+  [Vector Store Service\nChromaDB] as VectorStore
+  [Speech Service\nASR (Qwen)] as SpeechService
+  [TTS Service\nQwen TTS] as TTSService
+  [Embedding Service\nText Embedding] as EmbeddingService
+}
+
+package "Data Layer" {
+  database "Session Cache\nIn-Memory (TTL)" as SessionCache
+  database "ChromaDB\nVector Database" as ChromaDB
+  folder "User Data\nJSON Files" as UserData
+}
+
+package "External Services" {
+  cloud "DashScope API\nQwen LLM" as DashScopeLLM
+  cloud "DashScope API\nQwen ASR" as DashScopeASR
+  cloud "DashScope API\nQwen TTS" as DashScopeTTS
+  cloud "DashScope API\nEmbedding" as DashScopeEmbedding
+}
+
+' Client to API connections
+MobileApp --> RESTAPI : HTTPS\nJSON
+MobileApp --> WebSocketAPI : WebSocket\nAudio Stream
+WebBrowser --> RESTAPI : HTTP\nJSON
+WebBrowser --> WebSocketAPI : WebSocket\nAudio Stream
+CLI --> RESTAPI : HTTP\nJSON
+
+' API Layer connections
+RESTAPI --> FastAPI
+WebSocketAPI --> FastAPI
+WebRouter --> FastAPI
+FastAPI --> ConversationService
+FastAPI --> VectorStore
+
+' Service Layer connections
+ConversationService --> SessionCache : Read/Write
+ConversationService --> LLMService : Generate Response
+ConversationService --> VectorStore : Search Similar Places
+VectorStore --> ChromaDB : Query/Insert
+VectorStore --> EmbeddingService : Generate Embeddings
+SpeechService --> DashScopeASR : Real-time ASR
+TTSService --> DashScopeTTS : Text-to-Speech
+LLMService --> DashScopeLLM : Chat Completion
+EmbeddingService --> DashScopeEmbedding : Text Embedding
+
+' Data Layer connections
+VectorStore --> UserData : Load/Save JSON
+ConversationService --> UserData : Load User Preferences
+
+note right of SessionCache
+  TTL: 30 minutes
+  Max Sessions: 1000
+  Auto Cleanup: 5 minutes
+end note
+
+note right of ChromaDB
+  Persistent Storage
+  Vector Similarity Search
+  User Visit History
+end note
+
+note right of ConversationService
+  Manages conversation flow
+  Max 3 turns
+  Session-based context
+end note
+
+@enduml

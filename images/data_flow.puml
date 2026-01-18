@@ -1,0 +1,89 @@
+@startuml Data Plug Copilot - Data Flow Diagram
+
+title Data Plug Copilot - Data Flow
+
+skinparam activity {
+  BackgroundColor #E1F5FF
+  BorderColor #0066CC
+  FontColor #000000
+}
+
+skinparam arrow {
+  Color #0066CC
+}
+
+start
+
+:Client Request\n(Mobile App / Web Browser);
+
+partition "Session Start" {
+  :POST /api/v1/chat/start;
+  :Create Session\nGenerate Session ID;
+  :Load User Data\n(user_preferences, favorite_spots);
+  :Save to data/user_data/*.json;
+  :Convert to Vector Format;
+  :Store in ChromaDB;
+  :Return Welcome Message;
+}
+
+partition "Message Processing" {
+  :POST /api/v1/chat/message\nor WebSocket Message;
+  
+  if (Input Type?) then (Text)
+    :Receive Text Message;
+  else (Voice)
+    :Receive Audio Stream\nvia WebSocket;
+    :Qwen ASR\nSpeech-to-Text;
+    :Extract Text;
+  endif
+  
+  :Update Session Context\n(current_location, destination);
+  :Search Similar Places\n(RAG with ChromaDB);
+  :Generate Embedding\nfor User Query;
+  :Vector Similarity Search\nin ChromaDB;
+  :Get Top 5 Results;
+  
+  :Call LLM Service\n(Qwen API);
+  :Generate Response\nwith RAG Context;
+  :Update Turn Count;
+  
+  if (TTS Enabled?) then (Yes)
+    :Call TTS Service\n(Qwen TTS);
+    :Convert Text to Audio;
+    :Encode Audio\n(Base64);
+  else (No)
+    :Skip TTS;
+  endif
+  
+  :Create ChatResponse\n(message, audio_data, suggestions);
+  :Update Session Cache;
+  :Return Response;
+}
+
+partition "Response Delivery" {
+  if (Connection Type?) then (REST API)
+    :Return JSON Response\nwith audio_data;
+  else (WebSocket)
+    :Send JSON Message;
+    if (Has Audio?) then (Yes)
+      :Send Audio Binary;
+    endif
+  endif
+}
+
+:Client Receives Response\n(Text + Audio);
+
+if (Session Complete?) then (Yes)
+  :POST /api/v1/chat/session/{id}\nDELETE;
+  :Clear Session Cache;
+  :Clear ChromaDB Data;
+  :Delete User Data Files;
+  :Session Ended;
+  stop
+else (No)
+  :Continue Conversation;
+  :Wait for Next Message;
+endif
+
+@enduml
+
