@@ -390,9 +390,57 @@ class ConversationService:
             logger.error(f"RAG検索エラー: {e}")
             return []
 
+    def _is_affirmative_response(self, message: str) -> bool:
+        """ユーザーの返答が肯定的かどうかを判定"""
+        affirmative_words = [
+            "はい", "yes", "ok", "okay", "オッケー", "おっけー",
+            "いいね", "いい", "良い", "そこにする", "それにする",
+            "行く", "行こう", "行きたい", "決まり", "決定",
+            "うん", "ええ", "そうする", "お願い", "賛成",
+            "了解", "りょうかい", "わかった", "オーケー"
+        ]
+        message_lower = message.lower().strip()
+        return any(word in message_lower for word in affirmative_words)
+
+    def _is_negative_response(self, message: str) -> bool:
+        """ユーザーの返答が否定的かどうかを判定"""
+        negative_words = [
+            "いいえ", "no", "違う", "他の", "別の", "やめ",
+            "ない", "なし", "だめ", "嫌", "いや", "結構です",
+            "次", "他", "別"
+        ]
+        message_lower = message.lower().strip()
+        return any(word in message_lower for word in negative_words)
+
+    def _generate_single_suggestion(self, context: ConversationContext) -> str:
+        """現在のインデックスの提案を1つ生成"""
+        if not context.suggestions_list:
+            return "提案がありません。"
+
+        idx = context.current_suggestion_index
+        if idx >= len(context.suggestions_list):
+            return None
+
+        suggestion = context.suggestions_list[idx]
+        place_name = suggestion.get("place_name", "不明な場所")
+        impression = suggestion.get("impression", "")
+        address = suggestion.get("address", "")
+
+        # 提案メッセージを生成
+        total = len(context.suggestions_list)
+        msg = f"{idx + 1}つ目の提案: {place_name}\n"
+        if address:
+            msg += f"住所: {address}\n"
+        if impression:
+            msg += f"前回の感想: 「{impression[:80]}」\n"
+        msg += "\nここに行きますか？"
+
+        return msg
+
     def process_message(self, request: ChatRequest) -> ChatResponse:
         """
         ユーザーメッセージを処理してレスポンスを生成する
+        フェーズベースの会話フローで1つずつ提案を行う
 
         Args:
             request: チャットリクエスト
@@ -428,75 +476,184 @@ class ConversationService:
         )
         context.messages.append(user_message)
 
-        # RAG検索: ユーザーメッセージに関連する訪問履歴を検索
-        rag_results = self._search_relevant_places(request.message, n_results=5)
+        # 応答メッセージと選択肢
+        response_message = ""
+        suggestions = []
+        is_complete = False
+        destination_info: Optional[PlaceInfo] = None
+        stopover_info: Optional[PlaceInfo] = None
 
-        # LLMで応答を生成（RAG結果をコンテキストとして渡す）
-        llm_result = llm_service.generate_stopover_suggestion(
-            user_message=request.message,
-            turn_count=context.turn_count,
-            current_location=context.current_location,
-            destination=context.destination,
-            rag_results=rag_results,
-            user_preferences=context.user_preferences,
-        )
+        # フェーズに応じた処理
+        phase = context.phase
+
+        if phase == ConversationPhase.WAITING_LOCATION:
+            # 現在地を設定して目的地質問フェーズへ
+            context.current_location = request.message
+            context.phase = ConversationPhase.ASKING_DESTINATION
+            response_message = "どこに行きたいですか？"
+
+        elif phase == ConversationPhase.ASKING_DESTINATION:
+            # 目的地を設定して希望質問フェーズへ
+            context.destination = request.message
+            context.phase = ConversationPhase.ASKING_PREFERENCES
+            response_message = f"{request.message}ですね。他に行きたいところ、やってみたいことはありますか？"
+
+        elif phase == ConversationPhase.ASKING_PREFERENCES:
+            # 希望を保存してRAG検索を実行
+            context.additional_preferences = request.message
+
+            # RAG検索: ユーザーの希望に関連する訪問履歴を検索
+            rag_results = self._search_relevant_places(request.message, n_results=3)
+
+            if rag_results:
+                # 提案リストを作成（最大3つ）
+                context.suggestions_list = []
+                for result in rag_results[:3]:
+                    metadata = result.get("metadata", {})
+                    context.suggestions_list.append({
+                        "place_name": metadata.get("place_name", ""),
+                        "address": metadata.get("address", ""),
+                        "impression": metadata.get("impression", ""),
+                    })
+
+                context.current_suggestion_index = 0
+                context.phase = ConversationPhase.SUGGESTING_FIRST
+
+                # 1つ目の提案を生成
+                response_message = self._generate_single_suggestion(context)
+                suggestions = ["はい、そこに行きます", "いいえ、次の提案を見たい"]
+            else:
+                # 検索結果がない場合
+                response_message = "申し訳ありません、訪問履歴から適切な場所が見つかりませんでした。\n他の希望はありますか？"
+
+        elif phase in [
+            ConversationPhase.SUGGESTING_FIRST,
+            ConversationPhase.SUGGESTING_SECOND,
+            ConversationPhase.SUGGESTING_THIRD,
+        ]:
+            # 提案に対するユーザーの返答を処理
+            if self._is_affirmative_response(request.message):
+                # 提案を受け入れた
+                current_suggestion = context.suggestions_list[context.current_suggestion_index]
+                context.selected_stopover = current_suggestion.get("place_name")
+
+                # 緯度・経度を取得
+                if context.destination:
+                    destination_info = geocoding_service.geocode(context.destination)
+                    context.destination_info = destination_info
+
+                if context.selected_stopover:
+                    stopover_info = geocoding_service.geocode(context.selected_stopover)
+                    context.selected_stopover_info = stopover_info
+
+                # 完了メッセージ
+                response_message = (
+                    f"了解しました。\n"
+                    f"目的地: {context.destination}\n"
+                    f"立ち寄り場所: {context.selected_stopover}\n"
+                    f"ナビゲーションを開始します。"
+                )
+                is_complete = True
+                context.phase = ConversationPhase.NAVIGATING
+
+            elif self._is_negative_response(request.message):
+                # 提案を拒否した → 次の提案へ
+                context.current_suggestion_index += 1
+
+                if context.current_suggestion_index < len(context.suggestions_list):
+                    # 次の提案を表示
+                    if context.current_suggestion_index == 1:
+                        context.phase = ConversationPhase.SUGGESTING_SECOND
+                    elif context.current_suggestion_index == 2:
+                        context.phase = ConversationPhase.SUGGESTING_THIRD
+
+                    response_message = self._generate_single_suggestion(context)
+
+                    # 最後の提案かどうかで選択肢を変える
+                    if context.current_suggestion_index == len(context.suggestions_list) - 1:
+                        suggestions = ["はい、そこに行きます", "いいえ、他の希望を伝える"]
+                    else:
+                        suggestions = ["はい、そこに行きます", "いいえ、次の提案を見たい"]
+                else:
+                    # 全ての提案を拒否した
+                    context.phase = ConversationPhase.ASKING_OTHER_PREFERENCES
+                    response_message = "他に希望はありますか？"
+            else:
+                # 不明な返答
+                response_message = "「はい」または「いいえ」でお答えください。\nここに行きますか？"
+                suggestions = ["はい、そこに行きます", "いいえ、次の提案を見たい"]
+
+        elif phase == ConversationPhase.ASKING_OTHER_PREFERENCES:
+            # 他の希望がある場合 → 再度RAG検索
+            if "ない" in request.message or "特に" in request.message or "なし" in request.message:
+                # 希望なし → 直行
+                if context.destination:
+                    destination_info = geocoding_service.geocode(context.destination)
+                    context.destination_info = destination_info
+
+                response_message = (
+                    f"了解しました。\n"
+                    f"目的地: {context.destination}\n"
+                    f"直行します。"
+                )
+                is_complete = True
+                context.phase = ConversationPhase.NAVIGATING
+            else:
+                # 新しい希望で再検索
+                context.additional_preferences = request.message
+                rag_results = self._search_relevant_places(request.message, n_results=3)
+
+                if rag_results:
+                    context.suggestions_list = []
+                    for result in rag_results[:3]:
+                        metadata = result.get("metadata", {})
+                        context.suggestions_list.append({
+                            "place_name": metadata.get("place_name", ""),
+                            "address": metadata.get("address", ""),
+                            "impression": metadata.get("impression", ""),
+                        })
+
+                    context.current_suggestion_index = 0
+                    context.phase = ConversationPhase.SUGGESTING_FIRST
+                    response_message = self._generate_single_suggestion(context)
+                    suggestions = ["はい、そこに行きます", "いいえ、次の提案を見たい"]
+                else:
+                    response_message = "申し訳ありません、適切な場所が見つかりませんでした。\n他の希望はありますか？"
+
+        else:
+            # その他のフェーズ（ナビゲーション中など）
+            response_message = "現在ナビゲーション中です。何かお手伝いできることはありますか？"
 
         # AIメッセージを履歴に追加
         ai_message = ChatMessage(
             role=MessageRole.ASSISTANT,
-            content=llm_result["message"],
+            content=response_message,
             timestamp=datetime.now(),
         )
         context.messages.append(ai_message)
 
         # ターンカウントを更新
-        context.turn_count = llm_result["turn_count"]
+        context.turn_count += 1
 
         # セッションを更新（TTLも延長される）
         self._cache.set(session_id, context)
 
         # TTS音声生成
-        audio_data, has_audio = self._generate_audio(llm_result["message"])
+        audio_data, has_audio = self._generate_audio(response_message)
 
         # 提案関連の情報を設定
         suggestion_index = None
         suggestion_total = None
-        if context.suggestions_list:
+        if context.suggestions_list and not is_complete:
             suggestion_index = context.current_suggestion_index + 1  # 1-indexed
             suggestion_total = len(context.suggestions_list)
 
-        # 旅程情報を設定（完了時のみ、緯度・経度付き）
-        destination_info: Optional[PlaceInfo] = None
-        stopover_info: Optional[PlaceInfo] = None
-
-        if llm_result["is_complete"]:
-            # 目的地の緯度・経度を取得
-            if context.destination:
-                if context.destination_info:
-                    destination_info = context.destination_info
-                else:
-                    destination_info = geocoding_service.geocode(context.destination)
-                    context.destination_info = destination_info
-                    logger.info(f"目的地ジオコーディング: {destination_info}")
-
-            # 立ち寄り場所の緯度・経度を取得
-            if context.selected_stopover:
-                if context.selected_stopover_info:
-                    stopover_info = context.selected_stopover_info
-                else:
-                    stopover_info = geocoding_service.geocode(context.selected_stopover)
-                    context.selected_stopover_info = stopover_info
-                    logger.info(f"立ち寄り場所ジオコーディング: {stopover_info}")
-
-            # コンテキストを更新
-            self._cache.set(session_id, context)
-
         return ChatResponse(
-            message=llm_result["message"],
+            message=response_message,
             session_id=session_id,
-            turn_count=llm_result["turn_count"],
-            is_complete=llm_result["is_complete"],
-            suggestions=llm_result["suggestions"],
+            turn_count=context.turn_count,
+            is_complete=is_complete,
+            suggestions=suggestions,
             suggestion_index=suggestion_index,
             suggestion_total=suggestion_total,
             destination=destination_info,
@@ -518,13 +675,16 @@ class ConversationService:
         if not session_id or not self._cache.exists(session_id):
             session_id = self.create_session()
 
+        context = self._cache.get(session_id)
+
+        # フェーズを目的地質問に設定
+        context.phase = ConversationPhase.ASKING_DESTINATION
+
         welcome_message = (
             "こんにちは！Data Plug Copilotです。\n"
-            "目的地までのルートで、立ち寄りたい場所はありますか？\n"
-            "あなたの訪問履歴を参考に、おすすめの場所をご提案します。"
+            "どこに行きたいですか？"
         )
 
-        context = self._cache.get(session_id)
         ai_message = ChatMessage(
             role=MessageRole.ASSISTANT,
             content=welcome_message,
@@ -543,7 +703,7 @@ class ConversationService:
             session_id=session_id,
             turn_count=0,
             is_complete=False,
-            suggestions=["カフェで休憩したい", "美味しいものが食べたい", "景色の良い場所に寄りたい"],
+            suggestions=[],
             audio_data=audio_data,
             has_audio=has_audio,
         )
