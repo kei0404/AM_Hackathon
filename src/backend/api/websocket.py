@@ -11,6 +11,8 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from ..models.chat import ChatRequest
 from ..services.conversation_service import conversation_service
+from ..services.event_broadcaster import event_broadcaster
+from ..services.location_service import location_service
 from ..services.speech_service import speech_service
 
 logger = logging.getLogger(__name__)
@@ -59,10 +61,18 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
+@router.websocket("/ws/voice")
+async def websocket_voice_endpoint_auto(
+    websocket: WebSocket,
+) -> None:
+    """セッションIDなしで接続（自動生成）"""
+    await websocket_voice_endpoint(websocket, session_id=None)
+
+
 @router.websocket("/ws/voice/{session_id}")
 async def websocket_voice_endpoint(
     websocket: WebSocket,
-    session_id: str,
+    session_id: Optional[str] = None,
 ) -> None:
     """
     音声ストリーミング入力エンドポイント
@@ -88,29 +98,63 @@ async def websocket_voice_endpoint(
     """
     # セッションの確認 - 存在しない場合は自動生成
     original_session_id = session_id
-    context = conversation_service.get_session(session_id)
+    context = None
+    if session_id:
+        context = conversation_service.get_session(session_id)
+
     if not context:
         # ユーザーデータを初期化（VectorStore、サンプルデータ）
         data_count = conversation_service.initialize_user_data()
         logger.info(f"ユーザーデータを初期化: {data_count}件")
 
-        # セッションが存在しない場合、自動的に作成
-        session_id = conversation_service.create_session()
-        context = conversation_service.get_session(session_id)
-        logger.info(f"新しいセッションを自動生成: {session_id}")
+    # WebSocket接続を確立
+    await websocket.accept()
 
-    # WebSocket接続を確立（新しいセッションIDで）
-    await manager.connect(websocket, session_id)
+    # サーバー側の現在位置を取得
+    server_location = location_service.get_current_location()
+    location_data = None
+    if server_location:
+        location_data = {
+            "latitude": server_location.latitude,
+            "longitude": server_location.longitude,
+            "address": server_location.address,
+            "source": server_location.source,
+        }
+        logger.info(f"サーバー位置情報: {server_location.latitude}, {server_location.longitude} ({server_location.source})")
+
+    # セッション開始 - ウェルカムメッセージを取得（セッションも自動作成される）
+    welcome_response = conversation_service.get_welcome_message(session_id)
+    session_id = welcome_response.session_id
+    logger.info(f"セッション開始: {session_id}")
+
+    # 接続管理に登録
+    manager.active_connections[session_id] = websocket
 
     # 古いセッションIDで接続が登録されていた場合は削除
-    if original_session_id != session_id and original_session_id in manager.active_connections:
+    if original_session_id and original_session_id != session_id and original_session_id in manager.active_connections:
         del manager.active_connections[original_session_id]
 
+    # 接続確立とウェルカムメッセージを送信
     await websocket.send_json({
-        "type": "connected",
-        "message": "WebSocket接続が確立されました",
+        "type": "session_start",
+        "message": welcome_response.message,
         "session_id": session_id,
+        "has_audio": welcome_response.has_audio,
+        "location": location_data,
     })
+
+    # ダッシュボードにセッション開始をブロードキャスト
+    await event_broadcaster.broadcast_session_start(
+        session_id=session_id,
+        welcome_message=welcome_response.message,
+        location=location_data,
+    )
+
+    # ウェルカムメッセージの音声データがあれば送信
+    if welcome_response.has_audio and welcome_response.audio_data:
+        audio_bytes = base64.b64decode(welcome_response.audio_data)
+        await websocket.send_bytes(audio_bytes)
+        logger.info(f"ウェルカム音声を送信: {len(audio_bytes)} bytes")
 
     asr_client = None
 
@@ -118,10 +162,14 @@ async def websocket_voice_endpoint(
     import asyncio
     main_loop = asyncio.get_running_loop()
 
-    async def process_transcription(text: str) -> None:
+    async def process_transcription(text: str, source: str = "voice") -> None:
         """認識されたテキストをチャット処理"""
         try:
             logger.info(f"チャット処理開始: {text}")
+
+            # ダッシュボードにユーザーメッセージをブロードキャスト
+            await event_broadcaster.broadcast_user_message(session_id, text, source)
+
             request = ChatRequest(
                 message=text,
                 session_id=session_id,
@@ -142,6 +190,17 @@ async def websocket_voice_endpoint(
                 "stopover": response.stopover.model_dump() if response.stopover else None,
                 "has_audio": response.has_audio,
             })
+
+            # ダッシュボードにAI応答をブロードキャスト
+            await event_broadcaster.broadcast_ai_response(
+                session_id=session_id,
+                message=response.message,
+                turn_count=response.turn_count,
+                is_complete=response.is_complete,
+                suggestions=response.suggestions,
+                destination=response.destination.model_dump() if response.destination else None,
+                stopover=response.stopover.model_dump() if response.stopover else None,
+            )
 
             # 音声データがあればバイナリで送信
             if response.has_audio and response.audio_data:
@@ -169,9 +228,11 @@ async def websocket_voice_endpoint(
                 "text": text,
                 "is_final": is_final,
             })
+            # ダッシュボードに音声認識結果をブロードキャスト
+            await event_broadcaster.broadcast_transcription(session_id, text, is_final)
             # 最終結果の場合、チャット処理を実行
             if is_final and text.strip():
-                await process_transcription(text)
+                await process_transcription(text, source="voice")
         except Exception as e:
             logger.error(f"文字起こし送信エラー: {e}")
 
@@ -214,6 +275,8 @@ async def websocket_voice_endpoint(
             "type": "asr_connected",
             "message": "音声認識が開始されました",
         })
+        # ダッシュボードにASRステータスをブロードキャスト
+        await event_broadcaster.broadcast_asr_status(session_id, "connected", "音声認識が開始されました")
 
     def on_asr_connected() -> None:
         """ASR接続完了コールバック（別スレッドから呼ばれる）"""
@@ -247,6 +310,12 @@ async def websocket_voice_endpoint(
                     if cmd_type == "start_asr":
                         # ASR開始
                         if asr_client is None:
+                            logger.info(f"音声入力開始リクエスト受信: {session_id}")
+                            # 即座に受付応答を返す
+                            await websocket.send_json({
+                                "type": "asr_starting",
+                                "message": "音声認識を開始しています...",
+                            })
                             try:
                                 asr_client = speech_service.create_asr_session(
                                     session_id=session_id,
@@ -254,7 +323,9 @@ async def websocket_voice_endpoint(
                                     on_error=on_asr_error,
                                     on_connected=on_asr_connected,
                                 )
+                                logger.info(f"ASRセッション作成成功: {session_id}")
                             except Exception as e:
+                                logger.error(f"ASR開始エラー: {e}")
                                 await websocket.send_json({
                                     "type": "error",
                                     "message": f"ASR開始エラー: {str(e)}",
@@ -279,7 +350,7 @@ async def websocket_voice_endpoint(
                         # テキストメッセージとして処理
                         text = data.get("text", "")
                         if text:
-                            await process_transcription(text)
+                            await process_transcription(text, source="text")
 
                     elif cmd_type == "ping":
                         await websocket.send_json({"type": "pong"})
@@ -294,44 +365,72 @@ async def websocket_voice_endpoint(
         logger.error(f"WebSocketエラー: {e}")
 
     finally:
+        # セッション終了処理
         manager.disconnect(session_id)
         if asr_client:
             speech_service.close_asr_session(session_id)
+        # セッションを削除（プライバシー・バイ・デザイン）
+        conversation_service.delete_session(session_id)
+        # ダッシュボードにセッション終了をブロードキャスト
+        await event_broadcaster.broadcast_session_end(session_id)
+        logger.info(f"セッション終了・削除: {session_id}")
+
+
+@router.websocket("/ws/chat")
+async def websocket_chat_endpoint_auto(
+    websocket: WebSocket,
+) -> None:
+    """セッションIDなしで接続（自動生成）"""
+    await websocket_chat_endpoint(websocket, session_id=None)
 
 
 @router.websocket("/ws/chat/{session_id}")
 async def websocket_chat_endpoint(
     websocket: WebSocket,
-    session_id: str,
+    session_id: Optional[str] = None,
 ) -> None:
     """
     テキストチャット用WebSocketエンドポイント
     """
     # セッションの確認 - 存在しない場合は自動生成
     original_session_id = session_id
-    context = conversation_service.get_session(session_id)
+    context = None
+    if session_id:
+        context = conversation_service.get_session(session_id)
+
     if not context:
         # ユーザーデータを初期化（VectorStore、サンプルデータ）
         data_count = conversation_service.initialize_user_data()
         logger.info(f"ユーザーデータを初期化: {data_count}件")
 
-        # セッションが存在しない場合、自動的に作成
-        session_id = conversation_service.create_session()
-        context = conversation_service.get_session(session_id)
-        logger.info(f"新しいセッションを自動生成: {session_id}")
+    # WebSocket接続を確立
+    await websocket.accept()
 
-    # WebSocket接続を確立（新しいセッションIDで）
-    await manager.connect(websocket, session_id)
+    # セッション開始 - ウェルカムメッセージを取得（セッションも自動作成される）
+    welcome_response = conversation_service.get_welcome_message(session_id)
+    session_id = welcome_response.session_id
+    logger.info(f"セッション開始: {session_id}")
+
+    # 接続管理に登録
+    manager.active_connections[session_id] = websocket
 
     # 古いセッションIDで接続が登録されていた場合は削除
-    if original_session_id != session_id and original_session_id in manager.active_connections:
+    if original_session_id and original_session_id != session_id and original_session_id in manager.active_connections:
         del manager.active_connections[original_session_id]
 
+    # 接続確立とウェルカムメッセージを送信
     await websocket.send_json({
-        "type": "connected",
-        "message": "チャットセッションが開始されました",
+        "type": "session_start",
+        "message": welcome_response.message,
         "session_id": session_id,
+        "has_audio": welcome_response.has_audio,
     })
+
+    # ウェルカムメッセージの音声データがあれば送信
+    if welcome_response.has_audio and welcome_response.audio_data:
+        audio_bytes = base64.b64decode(welcome_response.audio_data)
+        await websocket.send_bytes(audio_bytes)
+        logger.info(f"ウェルカム音声を送信: {len(audio_bytes)} bytes")
 
     try:
         while True:
@@ -390,4 +489,52 @@ async def websocket_chat_endpoint(
         logger.error(f"WebSocketエラー: {e}")
 
     finally:
+        # セッション終了処理
         manager.disconnect(session_id)
+        # セッションを削除（プライバシー・バイ・デザイン）
+        conversation_service.delete_session(session_id)
+        # ダッシュボードにセッション終了をブロードキャスト
+        await event_broadcaster.broadcast_session_end(session_id)
+        logger.info(f"セッション終了・削除: {session_id}")
+
+
+@router.websocket("/ws/dashboard")
+async def websocket_dashboard_endpoint(websocket: WebSocket) -> None:
+    """
+    ダッシュボード監視用WebSocketエンドポイント
+
+    セッションイベントをリアルタイムで受信:
+    - session_start: セッション開始
+    - session_end: セッション終了
+    - user_message: ユーザーメッセージ
+    - ai_response: AI応答
+    - transcription: 音声認識結果
+    - asr_status: ASRステータス変更
+    """
+    await websocket.accept()
+    await event_broadcaster.register_dashboard(websocket)
+    logger.info("ダッシュボード監視接続確立")
+
+    # 接続確認メッセージ
+    await websocket.send_json({
+        "type": "dashboard_connected",
+        "message": "ダッシュボード監視が開始されました",
+    })
+
+    try:
+        while True:
+            # クライアントからのメッセージを待機（ping/pong など）
+            data = await websocket.receive_json()
+            msg_type = data.get("type", "")
+
+            if msg_type == "ping":
+                await websocket.send_json({"type": "pong"})
+
+    except WebSocketDisconnect:
+        logger.info("ダッシュボード監視切断")
+
+    except Exception as e:
+        logger.error(f"ダッシュボード監視エラー: {e}")
+
+    finally:
+        await event_broadcaster.unregister_dashboard(websocket)

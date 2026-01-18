@@ -368,45 +368,79 @@
         });
     }
 
-    // Start button - Create new session
+    // Main WebSocket connection for session
+    let mainWs = null;
+
+    // Start button - Create new session via WebSocket
     startButton.addEventListener('click', async () => {
         startButton.disabled = true;
-        const startTime = Date.now();
 
         try {
-            // Get current location from browser
-            const location = await getCurrentLocation();
-            console.log('Location obtained:', location);
+            // Connect to WebSocket (session will be auto-created)
+            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${wsProtocol}//${window.location.host}/api/v1/ws/voice`;
 
-            const requestBody = {};
-            if (location) {
-                requestBody.current_location = location;
-            }
+            mainWs = new WebSocket(wsUrl);
+            mainWs.binaryType = 'blob';
 
-            const response = await fetch('/api/v1/chat/start', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(requestBody),
-            });
+            mainWs.onopen = () => {
+                console.log('Main WebSocket connected');
+                logApiCall('WS', '/api/v1/ws/voice', 'Connected', 0);
+            };
 
-            const duration = Date.now() - startTime;
+            mainWs.onmessage = async (event) => {
+                console.log('Main WS message:', typeof event.data, event.data instanceof Blob ? `Blob(${event.data.size})` : event.data.substring(0, 100));
 
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
+                if (event.data instanceof Blob) {
+                    // バイナリ音声データを再生
+                    playAudioBlob(event.data);
+                } else if (typeof event.data === 'string') {
+                    try {
+                        const data = JSON.parse(event.data);
+                        await handleMainWsMessage(data);
+                    } catch (e) {
+                        console.error('JSON parse error:', e);
+                    }
+                }
+            };
 
-            const data = await response.json();
-            sessionId = data.session_id;
-            isSessionActive = true;
+            mainWs.onerror = (error) => {
+                console.error('Main WebSocket error:', error);
+                alert('WebSocket接続に失敗しました');
+                startButton.disabled = false;
+            };
 
-            // Update UI elements
-            document.getElementById('session-id-display').textContent = sessionId.substring(0, 8) + '...';
+            mainWs.onclose = () => {
+                console.log('Main WebSocket closed');
+                if (isSessionActive) {
+                    // セッション終了時のUI更新
+                    resetUIToInitialState();
+                }
+            };
 
-            // Update session_state display
-            const sessionStateJson = document.getElementById('session-state-json');
-            sessionStateJson.innerHTML = `<span class="json-key">{</span>
+        } catch (error) {
+            console.error('Error starting session:', error);
+            alert('セッションの開始に失敗しました');
+            startButton.disabled = false;
+        }
+    });
+
+    // Handle main WebSocket messages
+    async function handleMainWsMessage(data) {
+        console.log('Main WS message type:', data.type);
+
+        switch (data.type) {
+            case 'session_start':
+                // セッション開始（ウェルカムメッセージ受信）
+                sessionId = data.session_id;
+                isSessionActive = true;
+
+                // Update UI elements
+                document.getElementById('session-id-display').textContent = sessionId.substring(0, 8) + '...';
+
+                // Update session_state display
+                const sessionStateJson = document.getElementById('session-state-json');
+                sessionStateJson.innerHTML = `<span class="json-key">{</span>
   <span class="json-key">"session_id"</span>: <span class="json-string">"${sessionId}"</span>,
   <span class="json-key">"status"</span>: <span class="json-string" id="session-status">"active"</span>,
   <span class="json-key">"turn_count"</span>: <span class="json-number" id="session-turn">0</span>,
@@ -414,72 +448,112 @@
   <span class="json-key">"data_scope"</span>: [<span class="json-string">"preferences"</span>, <span class="json-string">"favorites"</span>]
 <span class="json-key">}</span>`;
 
-            // Enable route inputs based on location availability
-            if (location) {
-                // 位置情報あり: 現在地を自動設定し、目的地入力を有効化
+                // 目的地入力を有効化
                 conversationPhase = 'asking_destination';
-                currentLocationInput.value = `${location.latitude.toFixed(6)}, ${location.longitude.toFixed(6)}`;
-                currentLocationInput.disabled = true;  // 自動取得したので編集不可
                 destinationInput.disabled = false;
                 destinationInput.focus();
-                messageInput.disabled = true;
-                messageInput.placeholder = '目的地を入力後に使用できます';
-            } else {
-                // 位置情報なし: 現在地入力を有効化
-                conversationPhase = 'waiting_location';
-                currentLocationInput.value = '';
-                currentLocationInput.placeholder = '現在地を入力してください';
-                currentLocationInput.disabled = false;
-                currentLocationInput.focus();
-                destinationInput.disabled = true;
                 messageInput.disabled = false;
-                messageInput.placeholder = '現在地を入力してください';
-            }
+                messageInput.placeholder = '目的地を入力してEnterで送信...';
 
-            // Update panels
-            document.getElementById('input-panel').classList.remove('opacity-50');
-            document.getElementById('input-status-dot').classList.add('animate-pulse');
-            document.getElementById('route-panel').classList.remove('opacity-50');
-            document.getElementById('route-status').textContent = '';
+                // Update panels
+                document.getElementById('input-panel').classList.remove('opacity-50');
+                document.getElementById('input-status-dot').classList.add('animate-pulse');
+                document.getElementById('route-panel').classList.remove('opacity-50');
+                document.getElementById('route-status').textContent = '';
 
-            // Fetch and display user_data
-            await fetchAndDisplayUserData();
+                // Fetch and display user_data
+                await fetchAndDisplayUserData();
 
-            // Update input JSON display
-            updateInputJsonDisplay('', sessionId, 0);
+                // Update input JSON display
+                updateInputJsonDisplay('', sessionId, 0);
 
-            // Update output with welcome message
-            updateOutputJson(data);
-            outputStatus.textContent = '200 OK';
+                // Update output with welcome message
+                updateOutputJson({
+                    message: data.message,
+                    suggestions: [],
+                    turn_count: 0,
+                    is_complete: false
+                });
+                outputStatus.textContent = 'session_start';
 
-            // Add welcome message to chat
-            addMessage('assistant', data.message, data.suggestions);
+                // Add welcome message to chat
+                addMessage('assistant', data.message, []);
 
-            // 音声があれば再生
-            if (data.has_audio && data.audio_data) {
-                playAudioResponse(data.audio_data);
-            }
+                // Log
+                logApiCall('WS', 'session_start', 'OK', 0);
 
-            // Log API call
-            logApiCall('POST', '/api/v1/chat/start', response.status, duration);
+                // Enable buttons
+                startButton.disabled = false;
+                if (recordingButton) {
+                    recordingButton.disabled = false;
+                }
+                break;
 
-            // Enable recording button
-            console.log('Enabling recording button...', recordingButton);
-            if (recordingButton) {
-                recordingButton.disabled = false;
-                recordingButton.removeAttribute('disabled');
-                console.log('Recording button enabled:', !recordingButton.disabled);
-            } else {
-                console.error('Recording button not found!');
-            }
+            case 'response':
+                // LLM response
+                turnCount = data.turn_count;
+                document.getElementById('session-turn').textContent = turnCount;
+                progressIndicator.textContent = `質問 ${turnCount}/${maxTurns}`;
 
-        } catch (error) {
-            console.error('Error starting session:', error);
-            alert('セッションの開始に失敗しました');
-        } finally {
-            startButton.disabled = false;
+                updateOutputJson(data);
+                outputStatus.textContent = '200 OK';
+
+                addMessage('assistant', data.message, data.suggestions);
+                updateQuickReplies(data.suggestions || []);
+
+                logApiCall('WS', 'response', 'OK', 0);
+
+                if (data.is_complete) {
+                    document.getElementById('session-status').textContent = '"completed"';
+                    messageInput.placeholder = '会話が完了しました';
+                }
+                break;
+
+            case 'transcription':
+                if (data.is_final) {
+                    transcriptionText.innerHTML = `<span class="text-emerald-400">${escapeHtml(data.text)}</span>`;
+                    asrStatus.textContent = '認識完了';
+                    if (data.text.trim()) {
+                        messageInput.value = data.text.trim();
+                        updateInputJsonDisplay(data.text.trim(), sessionId, turnCount);
+                    }
+                } else {
+                    transcriptionText.innerHTML = `<span class="text-slate-300">${escapeHtml(data.text)}</span><span class="animate-pulse">...</span>`;
+                    asrStatus.textContent = '認識中...';
+                }
+                break;
+
+            case 'asr_starting':
+                asrStatus.textContent = '音声認識を開始中...';
+                logApiCall('WS', 'asr_starting', 'OK', 0);
+                break;
+
+            case 'asr_connected':
+                asrStatus.textContent = '音声認識開始';
+                logApiCall('WS', 'asr_connected', 'OK', 0);
+                break;
+
+            case 'asr_error':
+            case 'error':
+                asrStatus.textContent = 'エラー';
+                console.error('WS error:', data.message);
+                break;
+
+            default:
+                console.log('Unknown message type:', data.type);
         }
-    });
+    }
+
+    // Send message via WebSocket
+    function sendMessageViaWs(message) {
+        if (mainWs && mainWs.readyState === WebSocket.OPEN) {
+            mainWs.send(JSON.stringify({ type: 'text', text: message }));
+            addMessage('user', message);
+            updateInputJsonDisplay(message, sessionId, turnCount);
+            return true;
+        }
+        return false;
+    }
 
     // Fetch user data and display
     async function fetchAndDisplayUserData() {
@@ -511,7 +585,7 @@
 <span class="json-key">}</span>`;
     }
 
-    // Stop button - End current session
+    // Stop button - End current session by closing WebSocket
     stopButton.addEventListener('click', async () => {
         if (!confirm('セッションを終了しますか？会話履歴は削除されます。')) {
             return;
@@ -520,16 +594,11 @@
         stopButton.disabled = true;
 
         try {
-            const response = await fetch(`/api/v1/chat/session/${sessionId}`, {
-                method: 'DELETE',
-            });
-
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
+            // Close WebSocket connection (this will trigger session deletion on server)
+            if (mainWs && mainWs.readyState === WebSocket.OPEN) {
+                mainWs.close();
+                logApiCall('WS', 'close', 'OK', 0);
             }
-
-            // Log API call
-            logApiCall('DELETE', `/api/v1/chat/session/${sessionId}`, response.status, 0);
 
             // Reset all UI to initial state
             resetUIToInitialState();
@@ -653,7 +722,13 @@
         const destination = destinationInput.value.trim();
         if (!destination) return;
 
-        await sendMessageToLLM(destination, 'destination');
+        // Send via WebSocket
+        if (sendMessageViaWs(destination)) {
+            destinationInput.disabled = true;
+            messageInput.disabled = false;
+            messageInput.placeholder = '他に行きたいところ・やってみたいことを入力...';
+            messageInput.focus();
+        }
     });
 
     // Common function to send message to LLM
@@ -780,16 +855,8 @@
         const message = messageInput.value.trim();
         if (!message) return;
 
-        // Disable input during processing
-        messageInput.disabled = true;
-
-        try {
-            await sendMessageToLLM(message, 'general');
-        } catch (error) {
-            // Error already handled in sendMessageToLLM
-        } finally {
-            // Re-enable input
-            messageInput.disabled = false;
+        // Send via WebSocket
+        if (sendMessageViaWs(message)) {
             messageInput.value = '';
             messageInput.focus();
         }
@@ -1024,9 +1091,8 @@
     logApiCall('GET', '/', 200, 0);
 
     // ========================================
-    // Voice Input (WebSocket + Web Audio API)
+    // Voice Input (using mainWs + Web Audio API)
     // ========================================
-    let voiceWs = null;
     let audioContext = null;
     let mediaStream = null;
     let scriptProcessor = null;
@@ -1047,8 +1113,13 @@
         }
     });
 
-    // Start voice recording
+    // Start voice recording (using mainWs)
     async function startVoiceRecording() {
+        if (!mainWs || mainWs.readyState !== WebSocket.OPEN) {
+            alert('WebSocket接続がありません。セッションを開始してください。');
+            return;
+        }
+
         try {
             // Request microphone access
             mediaStream = await navigator.mediaDevices.getUserMedia({
@@ -1060,53 +1131,10 @@
                 }
             });
 
-            // Connect to WebSocket
-            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${wsProtocol}//${window.location.host}/api/v1/ws/voice/${sessionId}`;
-
-            voiceWs = new WebSocket(wsUrl);
-            voiceWs.binaryType = 'blob';  // バイナリデータをBlobとして受信
-
-            voiceWs.onopen = () => {
-                console.log('Voice WebSocket connected');
-                asrStatus.textContent = '接続中...';
-                logApiCall('WS', `/ws/voice/${sessionId}`, 'Connected', 0);
-
-                // Start ASR
-                voiceWs.send(JSON.stringify({ type: 'start_asr' }));
-            };
-
-            voiceWs.onmessage = (event) => {
-                console.log('WebSocket message received:', typeof event.data, event.data instanceof Blob ? `Blob(${event.data.size})` : event.data.substring(0, 100));
-
-                // バイナリデータ（音声）かテキストデータ（JSON）かを判定
-                if (event.data instanceof Blob) {
-                    // バイナリ音声データを再生
-                    console.log('Playing audio blob:', event.data.size, 'bytes');
-                    playAudioBlob(event.data);
-                } else if (typeof event.data === 'string') {
-                    // JSONデータを処理
-                    try {
-                        const data = JSON.parse(event.data);
-                        handleVoiceMessage(data);
-                    } catch (e) {
-                        console.error('JSON parse error:', e);
-                    }
-                } else {
-                    console.warn('Unknown message type:', typeof event.data);
-                }
-            };
-
-            voiceWs.onerror = (error) => {
-                console.error('Voice WebSocket error:', error);
-                asrStatus.textContent = 'エラー';
-                stopVoiceRecording();
-            };
-
-            voiceWs.onclose = () => {
-                console.log('Voice WebSocket closed');
-                asrStatus.textContent = '切断';
-            };
+            // Start ASR via mainWs
+            mainWs.send(JSON.stringify({ type: 'start_asr' }));
+            asrStatus.textContent = '接続中...';
+            logApiCall('WS', 'start_asr', 'Sent', 0);
 
             // Setup audio processing
             audioContext = new (window.AudioContext || window.webkitAudioContext)({
@@ -1116,11 +1144,10 @@
             const source = audioContext.createMediaStreamSource(mediaStream);
 
             // Use ScriptProcessorNode for PCM conversion
-            // Buffer size: 4096 samples
             scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
 
             scriptProcessor.onaudioprocess = (event) => {
-                if (!isRecording || !voiceWs || voiceWs.readyState !== WebSocket.OPEN) {
+                if (!isRecording || !mainWs || mainWs.readyState !== WebSocket.OPEN) {
                     return;
                 }
 
@@ -1128,7 +1155,7 @@
                 // Convert Float32Array to Int16Array (PCM 16-bit)
                 const pcmData = convertFloat32ToInt16(inputData);
                 // Send as binary
-                voiceWs.send(pcmData.buffer);
+                mainWs.send(pcmData.buffer);
             };
 
             source.connect(scriptProcessor);
@@ -1168,104 +1195,14 @@
             mediaStream = null;
         }
 
-        // Close WebSocket
-        if (voiceWs) {
-            if (voiceWs.readyState === WebSocket.OPEN) {
-                voiceWs.send(JSON.stringify({ type: 'stop_asr' }));
-            }
-            voiceWs.close();
-            voiceWs = null;
+        // Stop ASR via mainWs
+        if (mainWs && mainWs.readyState === WebSocket.OPEN) {
+            mainWs.send(JSON.stringify({ type: 'stop_asr' }));
         }
 
         // Update UI
         updateRecordingButtonUI(false);
         asrStatus.textContent = '停止';
-    }
-
-    // Handle voice WebSocket messages
-    function handleVoiceMessage(data) {
-        console.log('Voice message:', data);
-
-        switch (data.type) {
-            case 'connected':
-                asrStatus.textContent = 'WebSocket接続完了';
-                break;
-
-            case 'asr_connected':
-                asrStatus.textContent = '音声認識開始';
-                break;
-
-            case 'transcription':
-                // Display transcription
-                if (data.is_final) {
-                    transcriptionText.innerHTML = `<span class="text-emerald-400">${escapeHtml(data.text)}</span>`;
-                    asrStatus.textContent = '認識完了';
-
-                    // Auto-fill message input
-                    if (data.text.trim()) {
-                        messageInput.value = data.text.trim();
-                        updateInputJsonDisplay(data.text.trim(), sessionId, turnCount);
-                    }
-                } else {
-                    transcriptionText.innerHTML = `<span class="text-slate-300">${escapeHtml(data.text)}</span><span class="animate-pulse">...</span>`;
-                    asrStatus.textContent = '認識中...';
-                }
-                break;
-
-            case 'response':
-                // LLM response received
-                turnCount = data.turn_count;
-                sessionTurn.textContent = turnCount;
-                progressIndicator.textContent = `質問 ${turnCount}/${maxTurns}`;
-
-                // Update output JSON display
-                updateOutputJson(data);
-                outputStatus.textContent = '200 OK';
-
-                // Add messages to chat
-                addMessage('user', messageInput.value || transcriptionText.textContent);
-                addMessage('assistant', data.message, data.suggestions);
-
-                // 音声はバイナリで別途送信されるため、playAudioBlobで再生される
-
-                // Update quick replies
-                updateQuickReplies(data.suggestions);
-
-                // Clear message input
-                messageInput.value = '';
-
-                // Log API call
-                logApiCall('WS', 'voice/response', 'OK', 0);
-
-                // Check if complete
-                if (data.is_complete) {
-                    document.getElementById('session-status').textContent = '"completed"';
-                    messageInput.placeholder = '会話が完了しました';
-                    stopVoiceRecording();
-                }
-                break;
-
-            case 'asr_error':
-                asrStatus.textContent = 'ASRエラー';
-                transcriptionText.innerHTML = `<span class="text-red-400">エラー: ${escapeHtml(data.message)}</span>`;
-                break;
-
-            case 'error':
-                asrStatus.textContent = 'エラー';
-                transcriptionText.innerHTML = `<span class="text-red-400">エラー: ${escapeHtml(data.message)}</span>`;
-                break;
-
-            case 'asr_stopped':
-                asrStatus.textContent = '停止';
-                break;
-
-            case 'pong':
-                // Heartbeat response
-                break;
-
-            default:
-                console.log('Unknown voice message type:', data.type);
-        }
     }
 
     // Update recording button UI
@@ -1296,6 +1233,164 @@
         }
         return int16Array;
     }
+
+    // ========================================
+    // Dashboard Monitor (for external clients)
+    // ========================================
+    let dashboardWs = null;
+
+    function connectDashboardMonitor() {
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${wsProtocol}//${window.location.host}/api/v1/ws/dashboard`;
+
+        dashboardWs = new WebSocket(wsUrl);
+
+        dashboardWs.onopen = () => {
+            console.log('Dashboard monitor connected');
+            logApiCall('WS', '/ws/dashboard', 'Connected', 0);
+        };
+
+        dashboardWs.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                handleDashboardEvent(data);
+            } catch (e) {
+                console.error('Dashboard parse error:', e);
+            }
+        };
+
+        dashboardWs.onerror = (error) => {
+            console.error('Dashboard monitor error:', error);
+        };
+
+        dashboardWs.onclose = () => {
+            console.log('Dashboard monitor disconnected, reconnecting...');
+            setTimeout(connectDashboardMonitor, 3000);
+        };
+    }
+
+    // Handle dashboard events from external clients
+    function handleDashboardEvent(data) {
+        if (data.type !== 'dashboard_event') return;
+
+        const eventType = data.event_type;
+        const eventSessionId = data.session_id;
+        const eventData = data.data || {};
+        const timestamp = new Date(data.timestamp).toLocaleTimeString('ja-JP');
+
+        console.log(`Dashboard event: ${eventType}`, data);
+
+        // Log the event
+        logApiCall('EVENT', eventType, eventSessionId ? eventSessionId.substring(0, 8) : '-', 0);
+
+        // Update UI based on event type
+        switch (eventType) {
+            case 'session_start':
+                // External client session started
+                if (!isSessionActive) {
+                    sessionId = eventSessionId;
+                    isSessionActive = true;
+                    document.getElementById('session-id-display').textContent = sessionId.substring(0, 8) + '...';
+
+                    // Update session state
+                    const sessionStateJson = document.getElementById('session-state-json');
+                    sessionStateJson.innerHTML = `<span class="json-key">{</span>
+  <span class="json-key">"session_id"</span>: <span class="json-string">"${sessionId}"</span>,
+  <span class="json-key">"status"</span>: <span class="json-string" id="session-status">"active"</span>,
+  <span class="json-key">"turn_count"</span>: <span class="json-number" id="session-turn">0</span>,
+  <span class="json-key">"max_turns"</span>: <span class="json-number">${maxTurns}</span>,
+  <span class="json-key">"source"</span>: <span class="json-string">"external_client"</span>
+<span class="json-key">}</span>`;
+
+                    // Show location if available
+                    if (eventData.location) {
+                        currentLocationInput.value = `${eventData.location.latitude.toFixed(6)}, ${eventData.location.longitude.toFixed(6)}`;
+                        if (eventData.location.address) {
+                            currentLocationInput.value += ` (${eventData.location.address})`;
+                        }
+                    }
+
+                    // Update panels
+                    document.getElementById('input-panel').classList.remove('opacity-50');
+                    document.getElementById('route-panel').classList.remove('opacity-50');
+
+                    // Add welcome message
+                    if (eventData.welcome_message) {
+                        addMessage('assistant', eventData.welcome_message, []);
+                        updateOutputJson({
+                            message: eventData.welcome_message,
+                            suggestions: [],
+                            turn_count: 0,
+                            is_complete: false
+                        });
+                    }
+                }
+                break;
+
+            case 'session_end':
+                if (eventSessionId === sessionId) {
+                    resetUIToInitialState();
+                }
+                break;
+
+            case 'user_message':
+                if (eventSessionId === sessionId && eventData.message) {
+                    addMessage('user', eventData.message);
+                    updateInputJsonDisplay(eventData.message, sessionId, turnCount);
+                    messageInput.value = '';
+                }
+                break;
+
+            case 'ai_response':
+                if (eventSessionId === sessionId) {
+                    turnCount = eventData.turn_count || turnCount;
+                    const turnEl = document.getElementById('session-turn');
+                    if (turnEl) turnEl.textContent = turnCount;
+                    progressIndicator.textContent = `質問 ${turnCount}/${maxTurns}`;
+
+                    updateOutputJson({
+                        message: eventData.message,
+                        suggestions: eventData.suggestions || [],
+                        turn_count: turnCount,
+                        is_complete: eventData.is_complete
+                    });
+
+                    addMessage('assistant', eventData.message, eventData.suggestions || []);
+                    updateQuickReplies(eventData.suggestions || []);
+
+                    if (eventData.is_complete) {
+                        const statusEl = document.getElementById('session-status');
+                        if (statusEl) statusEl.textContent = '"completed"';
+                    }
+                }
+                break;
+
+            case 'transcription':
+                if (eventSessionId === sessionId) {
+                    transcriptionPanel.classList.remove('hidden');
+                    if (eventData.is_final) {
+                        transcriptionText.innerHTML = `<span class="text-emerald-400">${escapeHtml(eventData.text)}</span>`;
+                        asrStatus.textContent = '認識完了';
+                    } else {
+                        transcriptionText.innerHTML = `<span class="text-slate-300">${escapeHtml(eventData.text)}</span><span class="animate-pulse">...</span>`;
+                        asrStatus.textContent = '認識中...';
+                    }
+                }
+                break;
+
+            case 'asr_status':
+                if (eventSessionId === sessionId) {
+                    asrStatus.textContent = eventData.message || eventData.status;
+                    if (eventData.status === 'connected') {
+                        transcriptionPanel.classList.remove('hidden');
+                    }
+                }
+                break;
+        }
+    }
+
+    // Connect to dashboard monitor on page load
+    connectDashboardMonitor();
 
 </script>
 {% endblock %}

@@ -16,11 +16,40 @@ from .api.web import router as web_router
 from .api.websocket import router as websocket_router
 
 # ロギング設定
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+import logging.handlers
+from pathlib import Path
+
+# ログディレクトリを作成
+LOG_DIR = Path(__file__).resolve().parent.parent.parent / "logs"
+LOG_DIR.mkdir(exist_ok=True)
+LOG_FILE = LOG_DIR / "server.log"
+
+# ファイルハンドラーとコンソールハンドラーを設定
+file_handler = logging.handlers.RotatingFileHandler(
+    LOG_FILE,
+    maxBytes=10 * 1024 * 1024,  # 10MB
+    backupCount=5,
+    encoding="utf-8",
 )
+file_handler.setLevel(logging.INFO)
+file_handler.setFormatter(
+    logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+)
+
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_handler.setFormatter(
+    logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+)
+
+# ルートロガーに設定
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+root_logger.addHandler(file_handler)
+root_logger.addHandler(console_handler)
+
 logger = logging.getLogger(__name__)
+logger.info(f"ログファイル: {LOG_FILE}")
 
 # パス設定
 BASE_DIR = Path(__file__).resolve().parent
