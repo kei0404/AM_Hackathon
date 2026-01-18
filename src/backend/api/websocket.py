@@ -147,9 +147,11 @@ async def websocket_voice_endpoint(
             if response.has_audio and response.audio_data:
                 audio_bytes = base64.b64decode(response.audio_data)
                 await manager.send_bytes(session_id, audio_bytes)
-                logger.info(f"音声データを送信: {len(audio_bytes)} bytes")
+                logger.info(f"音声データを送信: {len(audio_bytes)} bytes, is_complete={response.is_complete}")
+            else:
+                logger.warning(f"音声データなし: has_audio={response.has_audio}, audio_data_exists={response.audio_data is not None}")
 
-            logger.info(f"チャット処理完了: turn_count={response.turn_count}")
+            logger.info(f"チャット処理完了: turn_count={response.turn_count}, is_complete={response.is_complete}")
 
         except Exception as e:
             logger.error(f"チャット処理エラー: {e}")
@@ -365,7 +367,11 @@ async def websocket_chat_endpoint(
                         if response.has_audio and response.audio_data:
                             audio_bytes = base64.b64decode(response.audio_data)
                             await websocket.send_bytes(audio_bytes)
-                            logger.info(f"音声データを送信: {len(audio_bytes)} bytes")
+                            logger.info(f"音声データを送信: {len(audio_bytes)} bytes, is_complete={response.is_complete}")
+                        else:
+                            logger.warning(f"音声データなし: has_audio={response.has_audio}")
+
+                        logger.info(f"チャット処理完了: turn_count={response.turn_count}, is_complete={response.is_complete}")
 
                     except Exception as e:
                         logger.error(f"チャット処理エラー: {e}")

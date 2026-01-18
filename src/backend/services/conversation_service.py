@@ -25,6 +25,7 @@ from .sample_data import (
     get_data_from_files,
     save_sample_data_to_files,
 )
+from .audio_player_service import audio_player_service
 from .tts_service import tts_service
 from .vector_store import vector_store
 
@@ -242,12 +243,13 @@ class ConversationService:
             cleanup_interval=settings.SESSION_CLEANUP_INTERVAL,
         )
 
-    def _generate_audio(self, text: str) -> tuple[Optional[str], bool]:
+    def _generate_audio(self, text: str, play_on_server: bool = True) -> tuple[Optional[str], bool]:
         """
-        テキストから音声データを生成する
+        テキストから音声データを生成し、サーバー側で再生する
 
         Args:
             text: 音声に変換するテキスト
+            play_on_server: サーバー側で再生するかどうか
 
         Returns:
             (Base64エンコードされた音声データ, 音声があるかどうか)
@@ -260,8 +262,14 @@ class ConversationService:
             logger.info(f"TTS音声生成開始: {text[:50]}...")
             audio_bytes = tts_service.text_to_speech(text)
             if audio_bytes:
-                audio_data = base64.b64encode(audio_bytes).decode("utf-8")
                 logger.info(f"TTS音声生成完了: {len(audio_bytes)} bytes")
+
+                # サーバー側で音声を再生
+                if play_on_server:
+                    logger.info("サーバー側で音声を再生します")
+                    audio_player_service.play_audio(audio_bytes, audio_format="mp3")
+
+                audio_data = base64.b64encode(audio_bytes).decode("utf-8")
                 return audio_data, True
         except Exception as e:
             logger.warning(f"TTS変換に失敗しました: {e}")
@@ -546,11 +554,11 @@ class ConversationService:
                     stopover_info = geocoding_service.geocode(context.selected_stopover)
                     context.selected_stopover_info = stopover_info
 
-                # 完了メッセージ
+                # 完了メッセージ（音声出力向けに自然な文章）
                 response_message = (
-                    f"了解しました。\n"
-                    f"目的地: {context.destination}\n"
-                    f"立ち寄り場所: {context.selected_stopover}\n"
+                    f"了解しました。"
+                    f"目的地は{context.destination}、"
+                    f"立ち寄り場所は{context.selected_stopover}です。"
                     f"ナビゲーションを開始します。"
                 )
                 is_complete = True
@@ -592,8 +600,8 @@ class ConversationService:
                     context.destination_info = destination_info
 
                 response_message = (
-                    f"了解しました。\n"
-                    f"目的地: {context.destination}\n"
+                    f"了解しました。"
+                    f"目的地は{context.destination}です。"
                     f"直行します。"
                 )
                 is_complete = True
@@ -638,8 +646,10 @@ class ConversationService:
         # セッションを更新（TTLも延長される）
         self._cache.set(session_id, context)
 
-        # TTS音声生成
+        # TTS音声生成（最終案内を含む全メッセージで音声を生成）
+        logger.info(f"TTS生成開始: is_complete={is_complete}, message={response_message[:50]}...")
         audio_data, has_audio = self._generate_audio(response_message)
+        logger.info(f"TTS生成結果: has_audio={has_audio}, audio_size={len(audio_data) if audio_data else 0}")
 
         # 提案関連の情報を設定
         suggestion_index = None
