@@ -420,6 +420,148 @@ class ConversationService:
         message_lower = message.lower().strip()
         return any(word in message_lower for word in negative_words)
 
+    def _build_conversation_context(self, context: ConversationContext) -> str:
+        """会話コンテキストをテキスト形式で構築"""
+        context_parts = []
+
+        # 基本情報
+        context_parts.append("【セッション情報】")
+        context_parts.append(f"- ターン数: {context.turn_count}")
+        context_parts.append(f"- 現在のフェーズ: {context.phase.value}")
+
+        # ルート情報
+        if context.current_location or context.destination:
+            context_parts.append("\n【ルート情報】")
+            if context.current_location:
+                context_parts.append(f"- 現在地: {context.current_location}")
+            if context.destination:
+                context_parts.append(f"- 目的地: {context.destination}")
+
+        # ユーザーの希望
+        if context.additional_preferences:
+            context_parts.append(f"\n【ユーザーの希望】\n{context.additional_preferences}")
+
+        # 提案中の場所
+        if context.suggestions_list:
+            context_parts.append("\n【提案中の立ち寄り場所】")
+            for i, suggestion in enumerate(context.suggestions_list):
+                marker = "→ " if i == context.current_suggestion_index else "  "
+                context_parts.append(f"{marker}{i+1}. {suggestion.get('place_name', '不明')}")
+                if suggestion.get('impression'):
+                    context_parts.append(f"     感想: {suggestion.get('impression', '')[:50]}")
+
+        # 会話履歴（最新5件）
+        if context.messages:
+            context_parts.append("\n【最近の会話履歴】")
+            for msg in context.messages[-5:]:
+                role = "ユーザー" if msg.role == MessageRole.USER else "AI"
+                content = msg.content[:100] + "..." if len(msg.content) > 100 else msg.content
+                context_parts.append(f"{role}: {content}")
+
+        return "\n".join(context_parts)
+
+    def _generate_llm_response(
+        self,
+        context: ConversationContext,
+        user_message: str,
+        rag_results: Optional[list[dict]] = None,
+    ) -> tuple[str, list[str]]:
+        """
+        LLMを使用して応答を生成
+
+        Args:
+            context: 会話コンテキスト
+            user_message: ユーザーのメッセージ
+            rag_results: RAG検索結果
+
+        Returns:
+            (応答メッセージ, 選択肢リスト)
+        """
+        # システムプロンプトを構築
+        system_prompt = """あなたは「Data Plug Copilot」のAIアシスタントです。
+車のナビゲーションを支援し、ユーザーが目的地と立ち寄り場所を決める手助けをします。
+
+【最重要ルール】
+★ 1回の応答で質問は必ず1つだけにしてください。2つ以上の質問を同時にしないでください。
+★ 応答は短く、1-2文以内に収めてください。
+
+【その他のルール】
+1. 運転中のユーザーに話しかけるため、応答は簡潔で分かりやすくしてください
+2. 選択肢を提示する場合は、必ず以下の形式で出力してください：
+   [選択肢]
+   1. 選択肢1
+   2. 選択肢2
+3. 最大3つの選択肢のみ提示してください
+4. ユーザーの過去の訪問履歴や感想を参考に、パーソナライズされた提案をしてください
+
+【現在のフェーズに応じた対応】
+- ASKING_DESTINATION: 目的地を聞く（1つの質問のみ）
+- ASKING_PREFERENCES: 立ち寄りたい場所や希望を聞く（1つの質問のみ）
+- SUGGESTING_*: 1つの場所を提案し、行くかどうか確認する（1つの質問のみ）
+- ASKING_OTHER_PREFERENCES: 他の希望を聞く（1つの質問のみ）
+
+【禁止事項】
+- 「〇〇ですか？それとも△△ですか？」のような複数の質問を含む応答
+- 長い説明文の後に質問を付ける応答
+"""
+
+        # コンテキストを構築
+        conversation_context = self._build_conversation_context(context)
+
+        # RAG検索結果を追加
+        if rag_results:
+            conversation_context += "\n\n【ユーザーの訪問履歴（RAG検索結果）】"
+            for i, result in enumerate(rag_results, 1):
+                metadata = result.get("metadata", {})
+                conversation_context += f"\n{i}. {metadata.get('place_name', '不明')}"
+                if metadata.get('address'):
+                    conversation_context += f"\n   住所: {metadata.get('address')}"
+                if metadata.get('impression'):
+                    conversation_context += f"\n   感想: {metadata.get('impression')}"
+
+        # メッセージを構築
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"【コンテキスト】\n{conversation_context}\n\n【ユーザーの発言】\n{user_message}"},
+        ]
+
+        # LLM応答を生成
+        response_text = llm_service.generate_response(messages)
+
+        # 選択肢を抽出
+        suggestions = []
+        if "[選択肢]" in response_text:
+            lines = response_text.split("\n")
+            in_choices = False
+            for line in lines:
+                if "[選択肢]" in line:
+                    in_choices = True
+                    continue
+                if in_choices and line.strip():
+                    if line.strip()[0].isdigit():
+                        choice = line.strip()[2:].strip() if len(line.strip()) > 2 else ""
+                        if choice:
+                            suggestions.append(choice)
+
+        return response_text, suggestions[:3]
+
+    def _classify_user_response_with_llm(
+        self,
+        user_message: str,
+        current_suggestion: dict,
+    ) -> str:
+        """
+        LLMを使用してユーザーの返答が肯定か否定かを判定
+
+        Returns:
+            "affirmative" または "negative"
+        """
+        suggestion_context = f"提案: {current_suggestion.get('place_name', '不明な場所')}"
+        if current_suggestion.get('impression'):
+            suggestion_context += f"\n感想: {current_suggestion.get('impression', '')[:50]}"
+
+        return llm_service.classify_user_response(user_message, suggestion_context)
+
     def _generate_single_suggestion(self, context: ConversationContext) -> str:
         """現在のインデックスの提案を1つ生成"""
         if not context.suggestions_list:
@@ -488,6 +630,7 @@ class ConversationService:
         response_message = ""
         suggestions = []
         is_complete = False
+        is_llm_generated = False  # LLM生成フラグ（TTS出力判定用）
         destination_info: Optional[PlaceInfo] = None
         stopover_info: Optional[PlaceInfo] = None
 
@@ -527,12 +670,22 @@ class ConversationService:
                 context.current_suggestion_index = 0
                 context.phase = ConversationPhase.SUGGESTING_FIRST
 
-                # 1つ目の提案を生成
-                response_message = self._generate_single_suggestion(context)
-                suggestions = ["はい、そこに行きます", "いいえ、次の提案を見たい"]
+                # LLMを使用して1つ目の提案を生成
+                logger.info(f"LLM応答生成: コンテキストとRAG結果を使用")
+                response_message, suggestions = self._generate_llm_response(
+                    context, request.message, rag_results
+                )
+                is_llm_generated = True
+                if not suggestions:
+                    suggestions = ["はい、そこに行きます", "いいえ、次の提案を見たい"]
             else:
-                # 検索結果がない場合
-                response_message = "申し訳ありません、訪問履歴から適切な場所が見つかりませんでした。\n他の希望はありますか？"
+                # 検索結果がない場合もLLMで応答生成
+                response_message, suggestions = self._generate_llm_response(
+                    context, request.message, None
+                )
+                is_llm_generated = True
+                if not response_message:
+                    response_message = "申し訳ありません、訪問履歴から適切な場所が見つかりませんでした。\n他の希望はありますか？"
 
         elif phase in [
             ConversationPhase.SUGGESTING_FIRST,
@@ -540,9 +693,17 @@ class ConversationService:
             ConversationPhase.SUGGESTING_THIRD,
         ]:
             # 提案に対するユーザーの返答を処理
-            if self._is_affirmative_response(request.message):
+            current_suggestion = context.suggestions_list[context.current_suggestion_index]
+
+            # LLMを使用してユーザーの返答を判定
+            logger.info(f"LLMでユーザー返答を判定: {request.message}")
+            classification = self._classify_user_response_with_llm(
+                request.message, current_suggestion
+            )
+            logger.info(f"判定結果: {classification}")
+
+            if classification == "affirmative":
                 # 提案を受け入れた
-                current_suggestion = context.suggestions_list[context.current_suggestion_index]
                 context.selected_stopover = current_suggestion.get("place_name")
 
                 # 緯度・経度を取得
@@ -554,17 +715,22 @@ class ConversationService:
                     stopover_info = geocoding_service.geocode(context.selected_stopover)
                     context.selected_stopover_info = stopover_info
 
-                # 完了メッセージ（音声出力向けに自然な文章）
-                response_message = (
-                    f"了解しました。"
-                    f"目的地は{context.destination}、"
-                    f"立ち寄り場所は{context.selected_stopover}です。"
-                    f"ナビゲーションを開始します。"
+                # LLMで完了メッセージを生成
+                response_message, _ = self._generate_llm_response(
+                    context, f"ユーザーが{context.selected_stopover}に行くことを決定しました。完了メッセージを生成してください。", None
                 )
+                is_llm_generated = True
+                if not response_message:
+                    response_message = (
+                        f"了解しました。"
+                        f"目的地は{context.destination}、"
+                        f"立ち寄り場所は{context.selected_stopover}です。"
+                        f"ナビゲーションを開始します。"
+                    )
                 is_complete = True
                 context.phase = ConversationPhase.NAVIGATING
 
-            elif self._is_negative_response(request.message):
+            else:  # negative
                 # 提案を拒否した → 次の提案へ
                 context.current_suggestion_index += 1
 
@@ -575,35 +741,51 @@ class ConversationService:
                     elif context.current_suggestion_index == 2:
                         context.phase = ConversationPhase.SUGGESTING_THIRD
 
-                    response_message = self._generate_single_suggestion(context)
+                    # LLMで次の提案を生成
+                    response_message, suggestions = self._generate_llm_response(
+                        context, f"ユーザーが前の提案を断りました。次の提案「{context.suggestions_list[context.current_suggestion_index].get('place_name')}」を紹介してください。", None
+                    )
+                    is_llm_generated = True
+                    if not response_message:
+                        response_message = self._generate_single_suggestion(context)
 
                     # 最後の提案かどうかで選択肢を変える
-                    if context.current_suggestion_index == len(context.suggestions_list) - 1:
-                        suggestions = ["はい、そこに行きます", "いいえ、他の希望を伝える"]
-                    else:
-                        suggestions = ["はい、そこに行きます", "いいえ、次の提案を見たい"]
+                    if not suggestions:
+                        if context.current_suggestion_index == len(context.suggestions_list) - 1:
+                            suggestions = ["はい、そこに行きます", "いいえ、他の希望を伝える"]
+                        else:
+                            suggestions = ["はい、そこに行きます", "いいえ、次の提案を見たい"]
                 else:
                     # 全ての提案を拒否した
                     context.phase = ConversationPhase.ASKING_OTHER_PREFERENCES
-                    response_message = "他に希望はありますか？"
-            else:
-                # 不明な返答
-                response_message = "「はい」または「いいえ」でお答えください。\nここに行きますか？"
-                suggestions = ["はい、そこに行きます", "いいえ、次の提案を見たい"]
+                    response_message, suggestions = self._generate_llm_response(
+                        context, "ユーザーがすべての提案を断りました。他の希望を聞いてください。", None
+                    )
+                    is_llm_generated = True
+                    if not response_message:
+                        response_message = "他に希望はありますか？"
 
         elif phase == ConversationPhase.ASKING_OTHER_PREFERENCES:
-            # 他の希望がある場合 → 再度RAG検索
-            if "ない" in request.message or "特に" in request.message or "なし" in request.message:
+            # LLMでユーザーの返答を判定（希望なしかどうか）
+            is_no_preference = any(word in request.message for word in ["ない", "特に", "なし", "いらない", "直行"])
+
+            if is_no_preference:
                 # 希望なし → 直行
                 if context.destination:
                     destination_info = geocoding_service.geocode(context.destination)
                     context.destination_info = destination_info
 
-                response_message = (
-                    f"了解しました。"
-                    f"目的地は{context.destination}です。"
-                    f"直行します。"
+                # LLMで完了メッセージを生成
+                response_message, _ = self._generate_llm_response(
+                    context, f"ユーザーが立ち寄り場所は不要と言いました。目的地{context.destination}に直行する旨を伝えてください。", None
                 )
+                is_llm_generated = True
+                if not response_message:
+                    response_message = (
+                        f"了解しました。"
+                        f"目的地は{context.destination}です。"
+                        f"直行します。"
+                    )
                 is_complete = True
                 context.phase = ConversationPhase.NAVIGATING
             else:
@@ -623,10 +805,21 @@ class ConversationService:
 
                     context.current_suggestion_index = 0
                     context.phase = ConversationPhase.SUGGESTING_FIRST
-                    response_message = self._generate_single_suggestion(context)
-                    suggestions = ["はい、そこに行きます", "いいえ、次の提案を見たい"]
+
+                    # LLMで提案を生成
+                    response_message, suggestions = self._generate_llm_response(
+                        context, request.message, rag_results
+                    )
+                    is_llm_generated = True
+                    if not suggestions:
+                        suggestions = ["はい、そこに行きます", "いいえ、次の提案を見たい"]
                 else:
-                    response_message = "申し訳ありません、適切な場所が見つかりませんでした。\n他の希望はありますか？"
+                    response_message, suggestions = self._generate_llm_response(
+                        context, request.message, None
+                    )
+                    is_llm_generated = True
+                    if not response_message:
+                        response_message = "申し訳ありません、適切な場所が見つかりませんでした。\n他の希望はありますか？"
 
         else:
             # その他のフェーズ（ナビゲーション中など）
@@ -640,16 +833,25 @@ class ConversationService:
         )
         context.messages.append(ai_message)
 
+        # タイムアウト管理用：最後のAIメッセージを記録
+        context.last_ai_message = response_message
+        context.last_ai_message_time = datetime.now()
+
         # ターンカウントを更新
         context.turn_count += 1
 
         # セッションを更新（TTLも延長される）
         self._cache.set(session_id, context)
 
-        # TTS音声生成（最終案内を含む全メッセージで音声を生成）
-        logger.info(f"TTS生成開始: is_complete={is_complete}, message={response_message[:50]}...")
-        audio_data, has_audio = self._generate_audio(response_message)
-        logger.info(f"TTS生成結果: has_audio={has_audio}, audio_size={len(audio_data) if audio_data else 0}")
+        # TTS音声生成（LLM生成メッセージのみ音声を生成）
+        audio_data = None
+        has_audio = False
+        if is_llm_generated:
+            logger.info(f"TTS生成開始（LLM生成）: is_complete={is_complete}, message={response_message[:50]}...")
+            audio_data, has_audio = self._generate_audio(response_message)
+            logger.info(f"TTS生成結果: has_audio={has_audio}, audio_size={len(audio_data) if audio_data else 0}")
+        else:
+            logger.info(f"TTS生成スキップ（非LLM生成）: message={response_message[:50]}...")
 
         # 提案関連の情報を設定
         suggestion_index = None
@@ -705,7 +907,7 @@ class ConversationService:
         # セッションを更新
         self._cache.set(session_id, context)
 
-        # TTS音声生成
+        # TTS音声生成（ウェルカムメッセージも音声出力する）
         audio_data, has_audio = self._generate_audio(welcome_message)
 
         return ChatResponse(
@@ -714,6 +916,127 @@ class ConversationService:
             turn_count=0,
             is_complete=False,
             suggestions=[],
+            audio_data=audio_data,
+            has_audio=has_audio,
+        )
+
+    def generate_timeout_response(self, session_id: str) -> Optional[ChatResponse]:
+        """
+        タイムアウト時にLLMで応答を再生成する
+
+        ベクトルデータと会話キャッシュをコンテキストとして使用し、
+        質問を再度行う応答を生成する。
+
+        Args:
+            session_id: セッションID
+
+        Returns:
+            ChatResponse または セッションが存在しない場合はNone
+        """
+        context = self._cache.get(session_id)
+        if not context:
+            logger.warning(f"タイムアウト応答生成: セッションが見つかりません: {session_id}")
+            return None
+
+        logger.info(f"タイムアウト応答生成開始: session={session_id}, phase={context.phase.value}")
+
+        # RAG検索: 会話コンテキストに基づいて関連する場所を検索
+        rag_results = []
+        if context.additional_preferences:
+            rag_results = self._search_relevant_places(context.additional_preferences, n_results=3)
+            logger.info(f"タイムアウト時RAG検索結果: {len(rag_results)}件")
+
+        # タイムアウト用のシステムプロンプトを構築
+        timeout_system_prompt = """あなたは「Data Plug Copilot」のAIアシスタントです。
+ユーザーが180秒間応答していないため、再度質問を行います。
+
+【最重要ルール】
+★ 1回の応答で質問は必ず1つだけにしてください。
+★ 応答は短く、1-2文以内に収めてください。
+★ ユーザーがまだそこにいるか確認しつつ、前回の質問を繰り返してください。
+
+【タイムアウト時の対応】
+- まず「まだそこにいますか？」などの確認を行う
+- その後、現在のフェーズに応じた質問を1つだけ再度行う
+- 選択肢がある場合は、必ず以下の形式で出力：
+   [選択肢]
+   1. 選択肢1
+   2. 選択肢2
+"""
+
+        # コンテキストを構築
+        conversation_context = self._build_conversation_context(context)
+
+        # RAG検索結果を追加
+        if rag_results:
+            conversation_context += "\n\n【ユーザーの訪問履歴（RAG検索結果）】"
+            for i, result in enumerate(rag_results, 1):
+                metadata = result.get("metadata", {})
+                conversation_context += f"\n{i}. {metadata.get('place_name', '不明')}"
+                if metadata.get('address'):
+                    conversation_context += f"\n   住所: {metadata.get('address')}"
+                if metadata.get('impression'):
+                    conversation_context += f"\n   感想: {metadata.get('impression')}"
+
+        # メッセージを構築
+        messages = [
+            {"role": "system", "content": timeout_system_prompt},
+            {"role": "user", "content": f"【コンテキスト】\n{conversation_context}\n\n【状況】\nユーザーが180秒間応答していません。現在のフェーズは「{context.phase.value}」です。再度質問を行ってください。"},
+        ]
+
+        # LLM応答を生成
+        response_text = llm_service.generate_response(messages)
+
+        # 選択肢を抽出
+        suggestions = []
+        if "[選択肢]" in response_text:
+            lines = response_text.split("\n")
+            in_choices = False
+            for line in lines:
+                if "[選択肢]" in line:
+                    in_choices = True
+                    continue
+                if in_choices and line.strip():
+                    if line.strip()[0].isdigit():
+                        choice = line.strip()[2:].strip() if len(line.strip()) > 2 else ""
+                        if choice:
+                            suggestions.append(choice)
+        suggestions = suggestions[:3]
+
+        # AIメッセージを履歴に追加
+        ai_message = ChatMessage(
+            role=MessageRole.ASSISTANT,
+            content=response_text,
+            timestamp=datetime.now(),
+        )
+        context.messages.append(ai_message)
+
+        # タイムアウト管理用：最後のAIメッセージを記録
+        context.last_ai_message = response_text
+        context.last_ai_message_time = datetime.now()
+
+        # セッションを更新
+        self._cache.set(session_id, context)
+
+        # TTS音声生成（LLM生成メッセージなので音声出力）
+        logger.info(f"タイムアウト応答TTS生成: {response_text[:50]}...")
+        audio_data, has_audio = self._generate_audio(response_text)
+
+        # 提案関連の情報を設定
+        suggestion_index = None
+        suggestion_total = None
+        if context.suggestions_list:
+            suggestion_index = context.current_suggestion_index + 1
+            suggestion_total = len(context.suggestions_list)
+
+        return ChatResponse(
+            message=response_text,
+            session_id=session_id,
+            turn_count=context.turn_count,
+            is_complete=False,
+            suggestions=suggestions,
+            suggestion_index=suggestion_index,
+            suggestion_total=suggestion_total,
             audio_data=audio_data,
             has_audio=has_audio,
         )

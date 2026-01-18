@@ -2,9 +2,11 @@
 WebSocketエンドポイント - 音声ストリーミング入力
 """
 
+import asyncio
 import base64
 import json
 import logging
+from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -16,6 +18,9 @@ from ..services.location_service import location_service
 from ..services.speech_service import speech_service
 
 logger = logging.getLogger(__name__)
+
+# タイムアウト設定（秒）
+USER_RESPONSE_TIMEOUT = 180  # 180秒 = 3分
 
 router = APIRouter(tags=["websocket"])
 
@@ -159,13 +164,88 @@ async def websocket_voice_endpoint(
     asr_client = None
 
     # メインイベントループを取得（スレッドセーフな呼び出しに使用）
-    import asyncio
     main_loop = asyncio.get_running_loop()
+
+    # タイムアウト管理用の変数
+    last_response_time = datetime.now()
+    last_response_message = welcome_response.message
+    timeout_task: Optional[asyncio.Task] = None
+
+    async def generate_timeout_response() -> None:
+        """タイムアウト時にLLMで応答を再生成"""
+        nonlocal last_response_time, last_response_message
+        try:
+            logger.info(f"タイムアウト: LLMで応答を再生成します（session={session_id}）")
+
+            # LLMでタイムアウト応答を生成（ベクトルデータと会話キャッシュを使用）
+            response = conversation_service.generate_timeout_response(session_id)
+
+            if response:
+                # 応答を送信
+                await manager.send_json(session_id, {
+                    "type": "timeout_response",
+                    "message": response.message,
+                    "session_id": response.session_id,
+                    "turn_count": response.turn_count,
+                    "is_complete": response.is_complete,
+                    "suggestions": response.suggestions,
+                    "suggestion_index": response.suggestion_index,
+                    "suggestion_total": response.suggestion_total,
+                    "has_audio": response.has_audio,
+                })
+
+                # ダッシュボードにタイムアウト応答をブロードキャスト
+                await event_broadcaster.broadcast_event(
+                    "timeout_response",
+                    session_id,
+                    {
+                        "message": response.message,
+                        "suggestions": response.suggestions,
+                    },
+                )
+
+                # 音声データがあれば送信
+                if response.has_audio and response.audio_data:
+                    audio_bytes = base64.b64decode(response.audio_data)
+                    await manager.send_bytes(session_id, audio_bytes)
+                    logger.info(f"タイムアウト応答音声を送信: {len(audio_bytes)} bytes")
+
+                # タイムアウト時刻とメッセージを更新
+                last_response_time = datetime.now()
+                last_response_message = response.message
+            else:
+                logger.warning(f"タイムアウト応答生成失敗: セッションが見つかりません")
+
+        except Exception as e:
+            logger.error(f"タイムアウト応答生成エラー: {e}")
+
+    async def timeout_monitor() -> None:
+        """タイムアウト監視タスク"""
+        nonlocal last_response_time
+        while True:
+            try:
+                await asyncio.sleep(10)  # 10秒ごとにチェック
+                elapsed = (datetime.now() - last_response_time).total_seconds()
+                if elapsed >= USER_RESPONSE_TIMEOUT:
+                    # LLMでタイムアウト応答を再生成
+                    await generate_timeout_response()
+            except asyncio.CancelledError:
+                logger.info("タイムアウト監視タスクがキャンセルされました")
+                break
+            except Exception as e:
+                logger.error(f"タイムアウト監視エラー: {e}")
+
+    # タイムアウト監視タスクを開始
+    timeout_task = asyncio.create_task(timeout_monitor())
 
     async def process_transcription(text: str, source: str = "voice") -> None:
         """認識されたテキストをチャット処理"""
+        nonlocal last_response_time, last_response_message
         try:
             logger.info(f"チャット処理開始: {text}")
+
+            # ユーザー応答を受信したのでタイムアウトタイマーをリセット
+            last_response_time = datetime.now()
 
             # ダッシュボードにユーザーメッセージをブロードキャスト
             await event_broadcaster.broadcast_user_message(session_id, text, source)
@@ -176,6 +256,10 @@ async def websocket_voice_endpoint(
                 response_type="voice",
             )
             response = conversation_service.process_message(request)
+
+            # AI応答後にタイムアウトタイマーをリセットし、最後のメッセージを更新
+            last_response_time = datetime.now()
+            last_response_message = response.message
 
             await manager.send_json(session_id, {
                 "type": "response",
@@ -365,6 +449,13 @@ async def websocket_voice_endpoint(
         logger.error(f"WebSocketエラー: {e}")
 
     finally:
+        # タイムアウト監視タスクをキャンセル
+        if timeout_task:
+            timeout_task.cancel()
+            try:
+                await timeout_task
+            except asyncio.CancelledError:
+                pass
         # セッション終了処理
         manager.disconnect(session_id)
         if asr_client:

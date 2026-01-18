@@ -136,3 +136,6 @@ class ConversationContext(BaseModel):
     current_suggestion_index: int = 0  # 現在提案中のインデックス（0, 1, 2）
     selected_stopover: Optional[str] = None  # 選択された立ち寄り先
     selected_stopover_info: Optional[PlaceInfo] = None  # 選択された立ち寄り先（緯度・経度付き）
+    # タイムアウト管理用フィールド
+    last_ai_message: Optional[str] = None  # 最後のAIメッセージ（再送用）
+    last_ai_message_time: Optional[datetime] = None  # 最後のAIメッセージ送信時刻
